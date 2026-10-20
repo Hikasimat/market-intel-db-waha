@@ -45,7 +45,7 @@ services:
       - WAHA_DASHBOARD_USERNAME=__DASHBOARD_USERNAME__
       - WAHA_DASHBOARD_PASSWORD=__DASHBOARD_PASSWORD__
       - WAHA_API_KEY=__DASHBOARD_PASSWORD__
-      - WAHA_WEBHOOK_URL=http://localhost:8000/api/whatsapp/webhook/
+      - WAHA_WEBHOOK_URL=https://marketinteldbapp.hikasimat.com/api/whatsapp/webhook/
       - WAHA_WEBHOOK_SECRET=waha_secure_webhook_secret_2026
     volumes:
       - waha_prod_sessions:/app/.sessions
