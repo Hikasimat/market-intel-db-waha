@@ -50,6 +50,21 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Ensure ECR Repository Exists
+        run: |
+          echo "Checking if ECR repository '${{ env.ECR_REPOSITORY }}' exists in region '${{ env.AWS_REGION }}'..."
+          aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} >/dev/null 2>&1 || \
+          aws ecr create-repository \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --region ${{ env.AWS_REGION }} \
+            --image-scanning-configuration scanOnPush=true
+
+          # Enforce Free Tier compliance: Retain only 5 latest images to keep storage below 500MB
+          aws ecr put-lifecycle-policy \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --region ${{ env.AWS_REGION }} \
+            --lifecycle-policy-text '{"rules":[{"rulePriority":1,"description":"Retain last 5 images for Free Tier","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}' || true
+
       - name: Extract Metadata (Tags & Labels)
         id: meta
         uses: docker/metadata-action@v5
