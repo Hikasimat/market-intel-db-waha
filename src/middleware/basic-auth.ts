@@ -128,6 +128,7 @@ export function dashboardBasicAuth(req: Request, res: Response, next: NextFuncti
 </body>
 </html>
     `);
+    }
   }
 
   return res.status(401).json({
