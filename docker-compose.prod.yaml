@@ -1,0 +1,29 @@
+services:
+  waha-noweb-light:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: waha-noweb-light:latest
+    container_name: waha-noweb-light
+    restart: always
+    ports:
+      # Bind to 127.0.0.1:3000 so WAHA is protected from external internet scanning
+      # Nginx or Cloudflare reverse-proxy handles HTTPS and forwards locally
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env.production
+    volumes:
+      # Persistent volumes ensuring WhatsApp login credentials and media survive reboots
+      - waha_prod_sessions:/app/.sessions
+      - waha_prod_media:/app/.media
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  waha_prod_sessions:
+    name: waha_prod_sessions
+  waha_prod_media:
+    name: waha_prod_media

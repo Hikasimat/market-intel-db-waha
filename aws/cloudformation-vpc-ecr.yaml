@@ -1,0 +1,257 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Complete End-to-End Infrastructure for WAHA-NoWeb-Light: VPC, Subnet, Security Group, ECR, and GitHub Actions OIDC Role'
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: 'GitHub Username or Organization (e.g. mohan or your GitHub handle)'
+    Default: 'mohan'
+
+  GitHubRepo:
+    Type: String
+    Description: 'GitHub Repository name (e.g. WAHA or waha-noweb-light)'
+    Default: '*'
+
+  AdminIpCidr:
+    Type: String
+    Description: 'Your IP CIDR for SSH access (e.g. 203.0.113.25/32 or 0.0.0.0/0)'
+    Default: '0.0.0.0/0'
+
+Resources:
+  # ============================================================================
+  # 1. NETWORKING (VPC, Internet Gateway, Subnet, Route Table)
+  # ============================================================================
+  WAHAVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: WAHA-Production-VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: WAHA-VPC-IGW
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref WAHAVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WAHAVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: WAHA-Public-Subnet
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WAHAVPC
+      Tags:
+        - Key: Name
+          Value: WAHA-Public-RouteTable
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # ============================================================================
+  # 2. SECURITY GROUP (Firewall Rules)
+  # ============================================================================
+  WAHASecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security Group for WAHA-NoWeb-Light EC2 Host'
+      VpcId: !Ref WAHAVPC
+      SecurityGroupIngress:
+        # HTTP for Let's Encrypt / Webhook redirect
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: 'Allow HTTP traffic'
+        # HTTPS for secure Dashboard & Webhooks
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: 'Allow HTTPS traffic'
+        # SSH access
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminIpCidr
+          Description: 'SSH access'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'Allow all outbound traffic'
+      Tags:
+        - Key: Name
+          Value: WAHA-Production-SG
+
+  # ============================================================================
+  # 3. ELASTIC CONTAINER REGISTRY (ECR)
+  # ============================================================================
+  WAHAECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: waha-noweb-light
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Retain only the last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: WAHA-ECR-Repository
+
+  # ============================================================================
+  # 4. EC2 IAM ROLE (Allows EC2 to pull ECR & receive SSM auto-deployments)
+  # ============================================================================
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: WAHA-EC2-Instance-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: WAHA-EC2-Instance-Profile
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # ============================================================================
+  # 5. GITHUB OIDC PROVIDER & IAM ROLE
+  # ============================================================================
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f8d264fcd9
+
+  GitHubActionsDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GitHubActions-WAHA-Deployer
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:*'
+      Policies:
+        - PolicyName: ECRPushPullPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:GetRepositoryPolicy
+                  - ecr:DescribeRepositories
+                  - ecr:ListImages
+                  - ecr:DescribeImages
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt WAHAECRRepository.Arn
+        - PolicyName: SSMDeploymentPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:DescribeInstanceInformation
+                Resource: '*'
+
+Outputs:
+  VPCId:
+    Description: 'Created VPC ID'
+    Value: !Ref WAHAVPC
+
+  PublicSubnetId:
+    Description: 'Public Subnet ID for EC2 instance'
+    Value: !Ref PublicSubnet
+
+  SecurityGroupId:
+    Description: 'Security Group ID for EC2 instance'
+    Value: !Ref WAHASecurityGroup
+
+  ECRRepositoryUri:
+    Description: 'ECR Repository URI to build and push images'
+    Value: !GetAtt WAHAECRRepository.RepositoryUri
+
+  GitHubActionsRoleArn:
+    Description: 'Role ARN to add in GitHub repository variables (AWS_ROLE_ARN)'
+    Value: !GetAtt GitHubActionsDeployRole.Arn
+
+  EC2InstanceProfileName:
+    Description: 'Attach this instance profile to your EC2 instance'
+    Value: !Ref EC2InstanceProfile

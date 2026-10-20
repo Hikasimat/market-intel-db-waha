@@ -1,0 +1,9 @@
+node_modules
+dist
+.sessions
+.media
+.env
+npm-debug.log*
+.DS_Store
+coverage
+tests

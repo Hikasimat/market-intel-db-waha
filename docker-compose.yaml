@@ -1,0 +1,31 @@
+services:
+  waha-noweb-light:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: waha-noweb-light
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - WAHA_API_KEY=waha_secure_api_key_2026
+      - WAHA_LOG_LEVEL=info
+      - WAHA_LOG_FORMAT=JSON
+      - WHATSAPP_HOOK_URL=http://host.docker.internal:8000/api/whatsapp/webhook/
+      # '*' ensures ALL events (auth.qr, auth.pairing_code, session.*, message.*, group.*) are dispatched
+      - WHATSAPP_HOOK_EVENTS=*
+      # Cryptographic secret for tamper-proof HMAC-SHA512 & HMAC-SHA256 signatures
+      - WHATSAPP_HOOK_SECRET=waha_super_secret_hmac_key_2026
+      # Auto-start default session on boot so QR code is immediately pushed via webhook
+      - WHATSAPP_START_SESSION=default
+      # HTTP Basic Auth credentials for UI Dashboard (prevents unauthorized browser access)
+      - WAHA_DASHBOARD_USERNAME=admin
+      - WAHA_DASHBOARD_PASSWORD=waha_secure_api_key_2026
+    volumes:
+      - waha_sessions:/app/.sessions
+      - waha_media:/app/.media
+
+volumes:
+  waha_sessions:
+  waha_media:
