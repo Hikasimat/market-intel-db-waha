@@ -25,13 +25,19 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Verify Environment Variables
+      - name: Verify Environment Variables & Inspect OIDC Token
         run: |
           echo "AWS Region: ${{ env.AWS_REGION }}"
           echo "Role to Assume: ${{ env.ROLE_TO_ASSUME }}"
           if [ -z "${{ env.ROLE_TO_ASSUME }}" ]; then
             echo "❌ ERROR: ROLE_TO_ASSUME is empty! Make sure AWS_ROLE_ARN is configured in GitHub repository variables."
             exit 1
+          fi
+
+          TOKEN=$(curl -sLS -H "User-Agent: actions/runner" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r '.value' 2>/dev/null || true)
+          if [ -n "$TOKEN" ]; then
+            echo "=== OIDC Token Claims (sent by GitHub) ==="
+            echo "$TOKEN" | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{iss, aud, sub, repository, repository_owner, ref}' 2>/dev/null || true
           fi
 
       - name: Authenticate to AWS via OIDC (No Static Keys)
