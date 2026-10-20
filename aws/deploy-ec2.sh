@@ -42,8 +42,8 @@ services:
       - PORT=3000
       - WAHA_LOG_LEVEL=info
       - WAHA_PRINT_QR=true
-      - WAHA_DASHBOARD_USERNAME=admin
-      - WAHA_DASHBOARD_PASSWORD=waha_secure_api_key_2026
+      - WAHA_DASHBOARD_USERNAME=__DASHBOARD_USERNAME__
+      - WAHA_DASHBOARD_PASSWORD=__DASHBOARD_PASSWORD__
       - WAHA_WEBHOOK_URL=http://localhost:8000/api/whatsapp/webhook/
       - WAHA_WEBHOOK_SECRET=waha_secure_webhook_secret_2026
     volumes:

@@ -114,12 +114,15 @@ jobs:
           REGISTRY="${{ steps.login-ecr.outputs.registry }}"
           ECR_PASSWORD=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
 
-          echo "Dispatching deployment for $IMAGE_URI to EC2: ${{ env.EC2_INSTANCE_ID }}"
+          DASHBOARD_USER="${{ secrets.WAHA_DASHBOARD_USERNAME || vars.WAHA_DASHBOARD_USERNAME || 'admin' }}"
+          DASHBOARD_PASS="${{ secrets.WAHA_DASHBOARD_PASSWORD || vars.WAHA_DASHBOARD_PASSWORD || 'waha_secure_api_key_2026' }}"
 
           # Substitute variables safely from external deployment script
           sed -e "s|__IMAGE_URI__|$IMAGE_URI|g" \
               -e "s|__REGISTRY__|$REGISTRY|g" \
               -e "s|__ECR_PASSWORD__|$ECR_PASSWORD|g" \
+              -e "s|__DASHBOARD_USERNAME__|$DASHBOARD_USER|g" \
+              -e "s|__DASHBOARD_PASSWORD__|$DASHBOARD_PASS|g" \
               aws/deploy-ec2.sh > /tmp/deploy.sh
 
           # Base64 encode the script to completely bypass quoting and newline issues
