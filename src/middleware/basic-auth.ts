@@ -21,14 +21,15 @@ export function dashboardBasicAuth(req: Request, res: Response, next: NextFuncti
     return next();
   }
 
-  // Allow bypassing if a valid API key is supplied via headers or query
+  // Allow bypassing if a valid API key or dashboard password is supplied via headers or query
   const apiKeyHeader = req.headers['x-api-key'] as string | undefined;
   const bearerHeader = req.headers.authorization?.startsWith('Bearer ')
     ? req.headers.authorization.slice(7).trim()
     : undefined;
   const providedKey = apiKeyHeader || bearerHeader || (req.query.apiKey as string | undefined);
 
-  if (config.apiKey && providedKey && safeCompare(providedKey, config.apiKey)) {
+  const validKeys = [config.apiKey, config.dashboardPassword].filter(Boolean) as string[];
+  if (providedKey && validKeys.some((k) => safeCompare(providedKey, k))) {
     return next();
   }
 
@@ -55,11 +56,13 @@ export function dashboardBasicAuth(req: Request, res: Response, next: NextFuncti
     }
   }
 
-  // Challenge client with 401 and WWW-Authenticate header
-  res.setHeader('WWW-Authenticate', 'Basic realm="WAHA Live Monitor - Restricted Area", charset="UTF-8"');
-
-  if (req.accepts('html')) {
-    return res.status(401).send(`
+  // Only challenge browser with WWW-Authenticate header when requesting HTML pages directly.
+  // For background JSON/API fetch calls, do NOT send WWW-Authenticate to avoid endless browser popups!
+  const isApiRequest = req.path.startsWith('/api/') || req.xhr || req.headers['accept']?.includes('application/json');
+  if (!isApiRequest) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="WAHA Live Monitor - Restricted Area", charset="UTF-8"');
+    if (req.accepts('html')) {
+      return res.status(401).send(`
 <!DOCTYPE html>
 <html lang="en">
 <head>

@@ -893,7 +893,7 @@ const isTamperProof = crypto.timingSafeEqual(
           headers['authorization'] = 'Bearer ' + apiKey;
         }
 
-        const res = await fetch('/api/dashboard/stats', { headers });
+        const res = await fetch('/api/dashboard/stats', { headers, credentials: 'same-origin' });
         if (!res.ok) {
           throw new Error('HTTP ' + res.status);
         }
