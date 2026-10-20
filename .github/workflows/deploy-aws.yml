@@ -25,6 +25,15 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: Verify Environment Variables
+        run: |
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "Role to Assume: ${{ env.ROLE_TO_ASSUME }}"
+          if [ -z "${{ env.ROLE_TO_ASSUME }}" ]; then
+            echo "❌ ERROR: ROLE_TO_ASSUME is empty! Make sure AWS_ROLE_ARN is configured in GitHub repository variables."
+            exit 1
+          fi
+
       - name: Authenticate to AWS via OIDC (No Static Keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
