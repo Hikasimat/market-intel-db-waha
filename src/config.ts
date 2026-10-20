@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 
 // Load environment variables from .env if present
 dotenv.config();
-
+// works
 export interface AppConfig {
   port: number;
   host: string;
