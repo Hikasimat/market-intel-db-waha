@@ -95,6 +95,9 @@ jobs:
     if: vars.EC2_INSTANCE_ID != ''
 
     steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
       - name: Authenticate to AWS via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:

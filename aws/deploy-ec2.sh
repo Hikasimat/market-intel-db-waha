@@ -62,9 +62,6 @@ volumes:
     name: waha_prod_media
 COMPOSE_EOF
 
-# Substitute actual image URI into compose file
-sed -i "s|__IMAGE_URI__|__IMAGE_URI__|g" docker-compose.prod.yaml
-
 # 7. Start/recreate container
 echo "Starting WAHA container with docker compose..."
 docker compose -f docker-compose.prod.yaml up -d --force-recreate
