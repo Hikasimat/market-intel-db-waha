@@ -1,10 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
-// @ts-ignore
-import wsPkg from 'ws';
-const WebSocketServer = wsPkg.WebSocketServer || wsPkg.Server;
-const WebSocket = wsPkg.WebSocket || wsPkg;
-
+import { WebSocketServer, WebSocket } from 'ws';
 import { config } from '../config.js';
 import { createChildLogger } from '../logger.js';
 import { callingService } from './calling-service.js';
