@@ -65,5 +65,23 @@ describe('Webhook Security & HMAC Signing', () => {
     expect(isAllowed('session.connected')).toBe(true);
     expect(isAllowed('message')).toBe(true);
     expect(isAllowed('group.v2.participants')).toBe(true);
+    expect(isAllowed('call.received')).toBe(true);
+    expect(isAllowed('call.ended')).toBe(true);
+  });
+
+  it('should correctly filter with call.* wildcard', () => {
+    const configuredEvents = ['call.*'];
+    const isAllowed = (event: string) =>
+      configuredEvents.includes('*') ||
+      configuredEvents.includes(event) ||
+      configuredEvents.includes(event.split('.')[0] + '.*');
+
+    expect(isAllowed('call.received')).toBe(true);
+    expect(isAllowed('call.ringing')).toBe(true);
+    expect(isAllowed('call.accepted')).toBe(true);
+    expect(isAllowed('call.rejected')).toBe(true);
+    expect(isAllowed('call.missed')).toBe(true);
+    expect(isAllowed('call.ended')).toBe(true);
+    expect(isAllowed('message')).toBe(false);
   });
 });

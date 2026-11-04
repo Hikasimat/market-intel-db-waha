@@ -13,7 +13,7 @@ import makeWASocket, {
 import QRCode from 'qrcode';
 import { useAtomicMultiFileAuthState } from './auth.js';
 import { SessionStatus, type MeInfo, type SessionInfo, type WAMessage } from './types.js';
-import { toWAMessage, normalizeJid, parseMessageId } from './normalizer.js';
+import { toWAMessage, normalizeJid, parseMessageId, toWACallPayload } from './normalizer.js';
 import { resolveMediaBuffer, downloadAndSaveMedia, type MediaFileInput } from './media.js';
 import { createChildLogger } from '../logger.js';
 import { config } from '../config.js';
@@ -321,6 +321,40 @@ export class WhatsappSession extends EventEmitter {
           });
         }
       });
+
+      // Handle WhatsApp call events
+      this.sock.ev.on('call', async (calls) => {
+        try {
+          if (!Array.isArray(calls)) {
+            this.logger.warn({ calls }, 'Received non-array call event from Baileys socket');
+            return;
+          }
+
+          for (const rawCall of calls) {
+            try {
+              if (!rawCall || typeof rawCall !== 'object') {
+                this.logger.warn({ rawCall }, 'Received invalid call event entry');
+                continue;
+              }
+
+              const { event, payload } = toWACallPayload(rawCall);
+              this.logger.info(
+                { event, session: this.name, callId: payload.id, status: payload.status, from: payload.from },
+                `📞 WhatsApp call event: ${event} (callId: ${payload.id}, status: ${payload.status}, from: ${payload.from})`
+              );
+
+              this.emit('call', { event, session: this.name, payload });
+              this.emit(event, { session: this.name, payload });
+
+              webhookDispatcher.dispatch(event, this.name, payload);
+            } catch (callErr: any) {
+              this.logger.error({ err: callErr, rawCall }, `Failed to process individual call event: ${callErr.message}`);
+            }
+          }
+        } catch (err: any) {
+          this.logger.error({ err }, `Unexpected error in call event handler: ${err.message}`);
+        }
+      });
     } catch (err: any) {
       this.logger.error(`Failed to initialize socket: ${err.message}`);
       this.setStatus(SessionStatus.FAILED, { error: err.message });
@@ -575,6 +609,7 @@ export class WhatsappSession extends EventEmitter {
       this.sock.ev.removeAllListeners('connection.update');
       this.sock.ev.removeAllListeners('creds.update');
       this.sock.ev.removeAllListeners('messages.upsert');
+      this.sock.ev.removeAllListeners('call');
       this.sock.end(undefined);
       this.sock = null;
     }

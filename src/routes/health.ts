@@ -1056,6 +1056,7 @@ const isTamperProof = crypto.timingSafeEqual(
         if (l.event.startsWith('message')) eventClass = 'pill-green';
         if (l.event.startsWith('session')) eventClass = 'pill-blue';
         if (l.event.startsWith('presence')) eventClass = 'pill-cyan';
+        if (l.event.startsWith('call')) eventClass = 'pill-amber';
 
         return \`
           <tr>

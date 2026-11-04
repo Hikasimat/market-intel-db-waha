@@ -1,5 +1,5 @@
-import type { proto } from '@whiskeysockets/baileys';
-import { type WAMessage, type ReplyToMessage, WAMessageAck, AckNames } from './types.js';
+import type { proto, WACallEvent } from '@whiskeysockets/baileys';
+import { type WAMessage, type ReplyToMessage, type WACallPayload, WAMessageAck, AckNames } from './types.js';
 
 export function normalizeJid(jid?: string | null): string {
   if (!jid) return '';
@@ -136,4 +136,59 @@ export function toWAMessage(msg: proto.IWebMessageInfo): WAMessage {
     replyTo: extractReplyTo(msg.message),
     _data: msg,
   };
+}
+
+export const CALL_STATUS_EVENT_MAP: Record<string, string> = {
+  offer: 'call.received',
+  ringing: 'call.ringing',
+  accept: 'call.accepted',
+  reject: 'call.rejected',
+  timeout: 'call.missed',
+  terminate: 'call.ended',
+};
+
+export function mapCallStatusToEvent(status?: string): string {
+  if (!status || typeof status !== 'string') {
+    return 'call.update';
+  }
+  return CALL_STATUS_EVENT_MAP[status.toLowerCase()] || 'call.update';
+}
+
+export function toWACallPayload(call: Partial<WACallEvent> | any): { event: string; payload: WACallPayload } {
+  let callDate: Date;
+  if (call?.date instanceof Date && !isNaN(call.date.getTime())) {
+    callDate = call.date;
+  } else if (call?.date !== undefined && call?.date !== null) {
+    const parsed = new Date(call.date);
+    callDate = !isNaN(parsed.getTime()) ? parsed : new Date();
+  } else if (call?.timestamp !== undefined && call?.timestamp !== null) {
+    const num = Number(call.timestamp);
+    const ms = num < 10000000000 ? num * 1000 : num;
+    const parsed = new Date(ms);
+    callDate = !isNaN(parsed.getTime()) ? parsed : new Date();
+  } else {
+    callDate = new Date();
+  }
+
+  const rawStatus = typeof call?.status === 'string' ? call.status : (call?.status != null ? String(call.status) : 'unknown');
+  const event = mapCallStatusToEvent(rawStatus);
+
+  const payload: WACallPayload = {
+    id: call?.id ? String(call.id) : '',
+    from: call?.from ? String(call.from) : '',
+    chatId: call?.chatId ? String(call.chatId) : (call?.from ? String(call.from) : ''),
+    timestamp: callDate.getTime(),
+    date: callDate.toISOString(),
+    isVideo: Boolean(call?.isVideo),
+    isGroup: Boolean(call?.isGroup),
+    groupJid: call?.groupJid ? String(call.groupJid) : null,
+    status: rawStatus,
+    offline: Boolean(call?.offline),
+  };
+
+  if (typeof call?.latencyMs === 'number') {
+    payload.latencyMs = call.latencyMs;
+  }
+
+  return { event, payload };
 }

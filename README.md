@@ -319,6 +319,13 @@ curl http://localhost:3000/api/default/groups
 | `presence.update` | Dispatched on contact typing or online status | `id`, `presences` |
 | `group.v2.participants` | Dispatched on participant join/leave/admin changes | `id`, `participants`, `action` |
 | `group.v2.update` | Dispatched when group subject or settings change | `id`, `subject`, `desc` |
+| `call.received` | Dispatched when an incoming call offer is detected | `id`, `from`, `chatId`, `isVideo`, `isGroup`, `status: "offer"` |
+| `call.ringing` | Dispatched when call enters ringing state | `id`, `from`, `status: "ringing"`, `latencyMs` |
+| `call.accepted` | Dispatched when call is answered | `id`, `from`, `status: "accept"` |
+| `call.rejected` | Dispatched when call is declined | `id`, `from`, `status: "reject"` |
+| `call.missed` | Dispatched when call times out without answer | `id`, `from`, `status: "timeout"` |
+| `call.ended` | Dispatched when call terminates | `id`, `from`, `status: "terminate"` |
+| `call.update` | Safe fallback for unmapped/custom call statuses | `id`, `from`, original `status` |
 
 ---
 
@@ -343,7 +350,103 @@ When WhatsApp requests authentication, this payload is instantly dispatched to y
 
 ---
 
-### 2. Zero-Interference Cryptographic Security
+### 2. WhatsApp Call Events and Webhook Integration
+
+`waha-noweb-light` detects WhatsApp voice and video call lifecycle updates directly through the authenticated Baileys socket (`sock.ev.on('call', ...)`) and standardizes them into structured webhook deliveries.
+
+#### Supported Call Event Names & Baileys Status Mapping
+
+| Baileys Call Status | Webhook Event Name | Description |
+|---|---|---|
+| `offer` | `call.received` | Incoming WhatsApp call received from a caller |
+| `ringing` | `call.ringing` | Call enters ringing state on the recipient device |
+| `accept` | `call.accepted` | Call was answered/accepted |
+| `reject` | `call.rejected` | Call was explicitly declined or rejected |
+| `timeout` | `call.missed` | Call timed out without an answer (missed call) |
+| `terminate` | `call.ended` | Call was terminated or connection ended |
+| *(unexpected / future status)* | `call.update` | Generic fallback ensuring zero event loss |
+
+> Original Baileys status strings are always preserved verbatim in `payload.status`.
+
+#### Example Incoming Call Webhook Payload (`call.received`)
+
+Every call webhook adheres to the standard `waha-noweb-light` envelope:
+
+```json
+{
+  "id": "evt_1792476538469_97ktfz",
+  "timestamp": 1792476538469,
+  "event": "call.received",
+  "session": "default",
+  "engine": "NOWEB",
+  "payload": {
+    "id": "WHATSAPP_CALL_ID",
+    "from": "919876543210@s.whatsapp.net",
+    "chatId": "919876543210@s.whatsapp.net",
+    "timestamp": 1792476538000,
+    "date": "2026-10-20T14:00:00.000Z",
+    "isVideo": false,
+    "isGroup": false,
+    "groupJid": null,
+    "status": "offer",
+    "offline": false
+  }
+}
+```
+
+- `id`: Original WhatsApp call ID.
+- `from`: Original WhatsApp caller JID.
+- `chatId`: WhatsApp conversation JID (matches `from` for 1-to-1 calls, or group JID).
+- `timestamp`: Normalized numeric millisecond timestamp.
+- `date`: Serializable ISO-8601 UTC timestamp.
+- `isVideo`: `true` if video call, `false` for voice call.
+- `isGroup`: `true` for group calls, `false` for direct 1-to-1 calls.
+- `groupJid`: Group JID string if group call, otherwise `null`.
+- `status`: Original raw Baileys status (`offer`, `ringing`, `accept`, `reject`, `timeout`, `terminate`).
+- `offline`: Indicates if the call was received while offline.
+- `latencyMs`: Network latency in milliseconds (included when provided by Baileys).
+
+#### Configuring Webhook Event Filtering
+
+You can control which events your server receives via the `WHATSAPP_HOOK_EVENTS` environment variable:
+
+- **All events (including all call events):**
+  ```env
+  WHATSAPP_HOOK_EVENTS=*
+  ```
+- **Wildcard for call events only:**
+  ```env
+  WHATSAPP_HOOK_EVENTS=call.*
+  ```
+- **Specific call events:**
+  ```env
+  WHATSAPP_HOOK_EVENTS=call.received,call.accepted,call.rejected,call.missed,call.ended
+  ```
+- **Mixed messaging and call events:**
+  ```env
+  WHATSAPP_HOOK_EVENTS=message,message.ack,call.*
+  ```
+
+#### Receiving and Verifying Call Webhooks
+
+Call webhooks are delivered via HTTP `POST` using the standard headers:
+- `X-Webhook-Request-Id`: Unique event ID for idempotency and deduplication.
+- `X-Webhook-Timestamp`: Dispatch timestamp in milliseconds.
+- `X-Webhook-Event`: Name of the event (e.g. `call.received`).
+- `X-Webhook-Session`: Session name (e.g. `default`).
+- `X-Webhook-HMAC`: HMAC-SHA512 cryptographic signature over `${X-Webhook-Timestamp}.${rawBody}`.
+- `X-Webhook-Digest`: SHA-256 digest of the request body.
+
+Your webhook handler can verify signatures using the cryptographic helper code shown in section 3 below.
+
+#### ⚠️ Technical Scope & Limitations Notice
+
+- **Lifecycle Event Detection Only:** This integration is exclusively designed for **detecting call events** and pushing their real-time lifecycle metadata to your webhooks.
+- **No Live Audio / Voice Calling:** This integration does **not** provide live voice audio streaming, answering calls programmatically, initiating outbound voice calls, WebRTC media pipelines, browser microphone input, or audio recording. Those capabilities require an external calling/media gateway and are outside the scope of Baileys socket signaling.
+
+---
+
+### 3. Zero-Interference Cryptographic Security
 
 Every webhook request contains cryptographic headers to guarantee that **no external actor can tamper with, spoof, or replay** webhook deliveries:
 

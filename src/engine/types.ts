@@ -108,3 +108,17 @@ export interface WebhookPayload<T = any> {
   engine: string;
   payload: T;
 }
+
+export interface WACallPayload {
+  id: string;
+  from: string;
+  chatId: string;
+  timestamp: number;
+  date: string;
+  isVideo: boolean;
+  isGroup: boolean;
+  groupJid: string | null;
+  status: string;
+  offline: boolean;
+  latencyMs?: number;
+}
