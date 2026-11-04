@@ -12,6 +12,7 @@ import { groupsRouter } from './routes/groups.js';
 import { filesRouter } from './routes/files.js';
 import { callingRouter } from './routes/calling.js';
 import { callingUIRouter } from './routes/calling-ui.js';
+import { callingBridgeRouter } from './routes/calling-bridge.js';
 
 export function createApp(): Express {
   const app = express();
@@ -26,7 +27,7 @@ export function createApp(): Express {
     const start = Date.now();
     res.on('finish', () => {
       const duration = Date.now() - start;
-      if (req.path !== '/health' && req.path !== '/ping') {
+      if (req.path !== '/health' && req.path !== '/ping' && !req.path.startsWith('/internal/bridge')) {
         logger.info({
           method: req.method,
           url: req.originalUrl,
@@ -43,6 +44,8 @@ export function createApp(): Express {
   app.use(express.static(path.resolve('public')));
   app.use(healthRouter);
   app.use(callingUIRouter);
+  // Internal engine -> Baileys RPC (own shared-token auth, not the public API key)
+  app.use(callingBridgeRouter);
 
   // Authentication barrier
   app.use(apiKeyAuth);

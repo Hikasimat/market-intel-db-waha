@@ -2,41 +2,50 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sync"
 
-	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
+// BridgeRegistration is sent by the Node host whenever a Baileys session connects.
+type BridgeRegistration struct {
+	Name           string `json:"name"`
+	JID            string `json:"jid"`
+	LID            string `json:"lid"`
+	DeviceIdentity []byte `json:"deviceIdentity"` // base64 in JSON
+}
+
 type SessionManager struct {
-	appCtx    context.Context
-	container *sqlstore.Container
-	broker    *Broker
-	store     *sessionStore
-	waLogger  waLog.Logger
-	log       *slog.Logger
-	maxCalls  int
+	appCtx   context.Context
+	broker   *Broker
+	log      *slog.Logger
+	maxCalls int
+	rpc      *rpcClient
 
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	order    []string
 }
 
-func newSessionManager(ctx context.Context, container *sqlstore.Container, broker *Broker, store *sessionStore, waLogger waLog.Logger, log *slog.Logger, maxCalls int) *SessionManager {
+func newSessionManager(ctx context.Context, broker *Broker, log *slog.Logger, maxCalls int, rpc *rpcClient) *SessionManager {
 	return &SessionManager{
-		appCtx:    ctx,
-		container: container,
-		broker:    broker,
-		store:     store,
-		waLogger:  waLogger,
-		log:       log,
-		maxCalls:  maxCalls,
-		sessions:  map[string]*Session{},
+		appCtx:   ctx,
+		broker:   broker,
+		log:      log,
+		maxCalls: maxCalls,
+		rpc:      rpc,
+		sessions: map[string]*Session{},
 	}
+}
+
+// sessionIDFor derives a stable session id from the session name so ids survive restarts.
+func sessionIDFor(name string) string {
+	sum := sha1.Sum([]byte("wacalls-bridge:" + name))
+	return hex.EncodeToString(sum[:16])
 }
 
 func (m *SessionManager) register(s *Session) {
@@ -85,112 +94,47 @@ func (m *SessionManager) snapshotEvents() []any {
 	return []any{map[string]any{"type": "session-list", "sessions": m.infos()}}
 }
 
-func (m *SessionManager) Restore(ctx context.Context) error {
-	rows, err := m.store.list(ctx)
+// Upsert registers (or refreshes after a Baileys reconnect) a bridged session.
+func (m *SessionManager) Upsert(reg BridgeRegistration) (*Session, error) {
+	if reg.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	ownPN, err := types.ParseJID(reg.JID)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("invalid jid %q: %w", reg.JID, err)
 	}
-	for _, row := range rows {
-		if row.JID == "" {
-			_ = m.store.delete(ctx, row.ID)
-			continue
-		}
-		jid, err := types.ParseJID(row.JID)
-		if err != nil {
-			m.log.Warn("dropping session with unparseable jid", "session", row.ID, "jid", row.JID)
-			_ = m.store.delete(ctx, row.ID)
-			continue
-		}
-		device, err := m.container.GetDevice(ctx, jid)
-		if err != nil || device == nil {
-			m.log.Warn("dropping session with no stored device", "session", row.ID, "jid", row.JID, "err", err)
-			_ = m.store.delete(ctx, row.ID)
-			continue
-		}
-		client := whatsmeow.NewClient(device, m.waLogger)
-		s := newSession(m, row.ID, row.Name, client)
-		m.register(s)
-		if err := s.connect(ctx); err != nil {
-			m.log.Error("session connect failed", "session", row.ID, "err", err)
+	var ownLID types.JID
+	if reg.LID != "" {
+		if lid, err := types.ParseJID(reg.LID); err == nil {
+			ownLID = lid
 		}
 	}
-	m.broker.emitSessionList(m.infos())
-	m.log.Info("sessions restored", "count", len(m.infos()))
-	return nil
-}
-
-func (m *SessionManager) Create(name string) (string, error) {
-	id := newSessionID()
-	if err := m.store.insert(m.appCtx, id, name); err != nil {
-		return "", err
+	sock := &bridgeSocket{
+		name:        reg.Name,
+		ownPN:       ownPN,
+		ownLID:      ownLID,
+		devIdentity: reg.DeviceIdentity,
+		rpc:         m.rpc,
 	}
-	device := m.container.NewDevice()
-	client := whatsmeow.NewClient(device, m.waLogger)
-	s := newSession(m, id, name, client)
+	id := sessionIDFor(reg.Name)
+	if existing, ok := m.Get(id); ok {
+		existing.update(sock, ownPN.String())
+		m.log.Info("bridged session refreshed", "session", id, "name", reg.Name, "jid", ownPN.String())
+		return existing, nil
+	}
+	s := newSession(m, id, reg.Name, sock, ownPN.String())
 	m.register(s)
 	m.broker.emitSessionList(m.infos())
-	if err := s.startPairing(m.appCtx); err != nil {
-		m.log.Error("start pairing failed", "session", id, "err", err)
-		return "", fmt.Errorf("start pairing: %w", err)
-	}
-	m.log.Info("session created", "session", id, "name", name)
-	return id, nil
+	m.log.Info("bridged session registered", "session", id, "name", reg.Name, "jid", ownPN.String())
+	return s, nil
 }
 
-func (m *SessionManager) Delete(ctx context.Context, id string) error {
-	s, ok := m.Get(id)
-	if !ok {
-		return fmt.Errorf("no session %s", id)
+// Disconnect marks a bridged session closed (Baileys connection dropped / logged out).
+func (m *SessionManager) Disconnect(name string) {
+	if s, ok := m.Get(sessionIDFor(name)); ok {
+		s.disconnect()
+		m.log.Info("bridged session disconnected", "session", s.id, "name", name)
 	}
-	if s.client.Store.ID != nil {
-		if err := s.client.Logout(ctx); err != nil {
-			m.log.Warn("logout failed; deleting locally", "session", id, "err", err)
-			_ = m.container.DeleteDevice(ctx, s.client.Store)
-		}
-	} else {
-		s.client.Disconnect()
-		_ = m.container.DeleteDevice(ctx, s.client.Store)
-	}
-	s.teardownAllCalls()
-	m.unregister(id)
-	_ = m.store.delete(ctx, id)
-	m.broker.emitSessionList(m.infos())
-	m.log.Info("session deleted", "session", id)
-	return nil
-}
-
-func (m *SessionManager) Logout(ctx context.Context, id string) error {
-	s, ok := m.Get(id)
-	if !ok {
-		return fmt.Errorf("no session %s", id)
-	}
-	if s.client.Store.ID != nil {
-		if err := s.client.Logout(ctx); err != nil {
-			m.log.Warn("logout failed", "session", id, "err", err)
-		}
-	}
-	s.replaceClient(whatsmeow.NewClient(m.container.NewDevice(), m.waLogger))
-	_ = m.store.setJID(ctx, id, "")
-	s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
-	m.log.Info("session disconnected", "session", id)
-	return nil
-}
-
-func (m *SessionManager) Pair(id string) error {
-	s, ok := m.Get(id)
-	if !ok {
-		return fmt.Errorf("no session %s", id)
-	}
-	if s.client.Store.ID != nil {
-		return fmt.Errorf("session already paired")
-	}
-	s.replaceClient(whatsmeow.NewClient(m.container.NewDevice(), m.waLogger))
-	if err := s.startPairing(m.appCtx); err != nil {
-		return fmt.Errorf("start pairing: %w", err)
-	}
-	m.broker.emitSessionList(m.infos())
-	m.log.Info("session re-pairing", "session", id)
-	return nil
 }
 
 func (m *SessionManager) disconnectAll() {

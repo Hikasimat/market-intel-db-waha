@@ -1,4 +1,3 @@
-import QRCode from 'qrcode';
 import { config } from '../config.js';
 import { createChildLogger } from '../logger.js';
 import { waCallsClient, WaCallsClient } from './wacalls-client.js';
@@ -30,33 +29,28 @@ export class CallingService {
     this.events.stop();
   }
 
+  /**
+   * Resolves the calling-engine session bridged onto a WAHA (Baileys) session.
+   * The engine has no WhatsApp login of its own: a session exists only while the matching
+   * WAHA session is connected, and it reuses that session's QR/credentials.
+   */
   public async getOrResolveCallingSession(wahaSessionName: string): Promise<WaCallsSession> {
     const existingSessions = await this.client.listSessions();
-    
-    // Look for a session named matching wahaSessionName or calling_<wahaSessionName>
+
     const match = existingSessions.find(
-      (s) => s.name === wahaSessionName || s.name === `calling_${wahaSessionName}`
+      (s) => s.name === `calling_${wahaSessionName}` || s.name === wahaSessionName
     );
 
-    if (match) {
-      this.sessionMap.set(wahaSessionName, match.id);
-      this.events.registerSessionMapping(match.id, wahaSessionName);
-      return match;
+    if (!match) {
+      throw new Error(
+        `WhatsApp session "${wahaSessionName}" is not connected. Start it and scan its QR code first; ` +
+          `voice calling reuses that same session.`
+      );
     }
 
-    // Otherwise create one
-    const callingName = `calling_${wahaSessionName}`;
-    const newId = await this.client.createSession(callingName);
-    this.sessionMap.set(wahaSessionName, newId);
-    this.events.registerSessionMapping(newId, wahaSessionName);
-
-    return {
-      id: newId,
-      name: callingName,
-      jid: '',
-      state: 'unpaired',
-      paired: false,
-    };
+    this.sessionMap.set(wahaSessionName, match.id);
+    this.events.registerSessionMapping(match.id, wahaSessionName);
+    return match;
   }
 
   public async getSessionStatus(wahaSessionName: string): Promise<{
@@ -90,45 +84,25 @@ export class CallingService {
         jid: sess.jid,
       };
     } catch (err: any) {
-      logger.warn(`Failed to retrieve calling session status for ${wahaSessionName}: ${err.message}`);
+      logger.debug(`Calling session for ${wahaSessionName} unavailable: ${err.message}`);
       return {
         enabled: true,
         wahaSession: wahaSessionName,
         callingSessionId: null,
         paired: false,
-        state: 'error: ' + err.message,
+        state: 'not_connected',
         jid: '',
       };
     }
   }
 
-  public async pair(wahaSessionName: string): Promise<{ sessionId: string }> {
-    const sess = await this.getOrResolveCallingSession(wahaSessionName);
-    await this.client.pairSession(sess.id);
-    return { sessionId: sess.id };
-  }
-
-  public async getQR(wahaSessionName: string): Promise<{ raw: string | null; base64: string | null }> {
-    const sess = await this.getOrResolveCallingSession(wahaSessionName);
-    const raw = this.events.getCachedQR(sess.id);
-    let base64: string | null = null;
-    if (raw) {
-      try {
-        base64 = await QRCode.toDataURL(raw);
-      } catch {
-        // ignore QR rendering errors
-      }
-    }
-    return { raw, base64 };
-  }
-
   public async startCall(wahaSessionName: string, phone: string, clientId?: string): Promise<{ callId: string }> {
     const sess = await this.getOrResolveCallingSession(wahaSessionName);
     const auth = this.events.getAuthState(sess.id);
-    const isPaired = auth?.paired ?? sess.paired;
-    if (!isPaired) {
+    const isConnected = auth?.paired ?? sess.paired;
+    if (!isConnected) {
       throw new Error(
-        `Calling session for "${wahaSessionName}" is not paired to WhatsApp yet. Please visit ${config.baseUrl}/calls to link the calling session via QR code first.`
+        `WhatsApp session "${wahaSessionName}" is not connected right now. Wait for it to reconnect (or scan its QR) and retry.`
       );
     }
     return await this.client.startOutgoingCall(sess.id, phone, clientId);
@@ -161,4 +135,3 @@ export class CallingService {
 }
 
 export const callingService = new CallingService();
-

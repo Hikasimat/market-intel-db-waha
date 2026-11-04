@@ -31,32 +31,29 @@ callingRouter.get('/api/calling/sessions/:session/status', async (req: Request, 
   }
 });
 
-// POST /api/calling/sessions/:session/pair - Request pairing for calling session
+// POST /api/calling/sessions/:session/pair - Kept for compatibility. Calling reuses the WAHA
+// WhatsApp session (same QR / linked device), so there is nothing separate to pair.
 callingRouter.post('/api/calling/sessions/:session/pair', async (req: Request, res: Response) => {
   try {
-    const session = req.params.session;
-    const result = await callingService.pair(session);
-    res.json({ status: 'pairing_initiated', ...result });
+    const status = await callingService.getSessionStatus(req.params.session);
+    res.json({
+      status: status.paired ? 'linked' : 'not_connected',
+      message:
+        'Voice calling reuses the existing WAHA WhatsApp session; no separate QR pairing is needed. ' +
+        'If the session is not connected, scan its QR via GET /api/:session/auth/qr.',
+      ...status,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/calling/sessions/:session/qr - Get pairing QR code for calling session
-callingRouter.get('/api/calling/sessions/:session/qr', async (req: Request, res: Response) => {
-  try {
-    const session = req.params.session;
-    const qr = await callingService.getQR(session);
-    if (!qr.raw) {
-      res.status(404).json({ error: 'No QR code available. Call POST /api/calling/sessions/:session/pair first.' });
-      return;
-    }
-    res.json(qr);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+// GET /api/calling/sessions/:session/qr - Kept for compatibility; calling has no QR of its own.
+callingRouter.get('/api/calling/sessions/:session/qr', (_req: Request, res: Response) => {
+  res.status(404).json({
+    error: 'Voice calling has no separate QR. It uses the WAHA session QR (GET /api/:session/auth/qr).',
+  });
 });
-
 // POST /api/calling/sessions/:session/calls - Initiate outgoing call
 callingRouter.post('/api/calling/sessions/:session/calls', async (req: Request, res: Response) => {
   try {

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 
 // Load environment variables from .env if present
@@ -24,6 +25,10 @@ export interface AppConfig {
   callingEnabled: boolean;
   wacallsUrl: string;
   wacallsToken: string;
+  /** Path to the embedded Go VoIP engine binary (spawned as a child process when present). */
+  wacallsBinary: string;
+  /** True when the engine URL was not explicitly configured, i.e. run it inside this container. */
+  wacallsEmbedded: boolean;
 }
 
 export function loadConfig(): AppConfig {
@@ -54,8 +59,17 @@ export function loadConfig(): AppConfig {
 
   // Live WhatsApp Voice Calling (WaCalls integration)
   const callingEnabled = process.env.CALLING_ENABLED === 'true';
-  const wacallsUrl = process.env.WACALLS_INTERNAL_URL?.trim() || process.env.WACALLS_URL?.trim() || 'http://wacalls:8080';
-  const wacallsToken = process.env.WACALLS_INTERNAL_TOKEN?.trim() || process.env.WACALLS_TOKEN?.trim() || '';
+  // The VoIP engine is bundled in this container and bridged onto the existing Baileys sessions
+  // (no separate WhatsApp login / QR). An explicit WACALLS_INTERNAL_URL points at an external engine instead.
+  const explicitWacallsUrl = process.env.WACALLS_INTERNAL_URL?.trim() || process.env.WACALLS_URL?.trim() || '';
+  const wacallsUrl = explicitWacallsUrl || 'http://127.0.0.1:8080';
+  const wacallsEmbedded = !explicitWacallsUrl || /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(explicitWacallsUrl);
+  let wacallsToken = process.env.WACALLS_INTERNAL_TOKEN?.trim() || process.env.WACALLS_TOKEN?.trim() || '';
+  if (callingEnabled && !wacallsToken) {
+    // Shared secret between this process and the engine child process; regenerated on every start.
+    wacallsToken = crypto.randomBytes(24).toString('hex');
+  }
+  const wacallsBinary = process.env.WACALLS_BINARY?.trim() || '/usr/local/bin/wacalls';
 
   return {
     port,
@@ -77,6 +91,8 @@ export function loadConfig(): AppConfig {
     callingEnabled,
     wacallsUrl,
     wacallsToken,
+    wacallsBinary,
+    wacallsEmbedded,
   };
 }
 

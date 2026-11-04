@@ -326,7 +326,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
     </div>
     <div class="header-links">
       <a href="/" class="btn-link">&larr; Main Dashboard</a>
-      <button id="btnPair" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">Link Calling Device</button>
+      <button id="btnPair" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">WhatsApp Session / QR</button>
     </div>
   </header>
 
@@ -466,10 +466,10 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
           pill.innerText = 'CALLING DISABLED';
         } else if (data.paired) {
           pill.className = 'status-pill pill-green';
-          pill.innerText = 'PAIRED & READY';
+          pill.innerText = 'WHATSAPP CONNECTED & READY';
         } else {
           pill.className = 'status-pill pill-amber';
-          pill.innerText = 'UNPAIRED (Scan QR)';
+          pill.innerText = 'WHATSAPP SESSION NOT CONNECTED';
         }
       } catch (err) {
         console.error(err);
@@ -628,37 +628,11 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       document.getElementById('btnMute').className = state.isMuted ? 'btn btn-red' : 'btn btn-secondary';
     });
 
-    // Pairing QR Modal
-    document.getElementById('btnPair').addEventListener('click', async () => {
-      document.getElementById('qrModal').style.display = 'flex';
-      document.getElementById('qrImg').style.display = 'none';
-      document.getElementById('qrLoading').style.display = 'flex';
-
-      await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/pair', {
-        method: 'POST',
-        headers: authHeaders()
-      });
-
-      // Poll for QR
-      let attempts = 0;
-      const pollQR = setInterval(async () => {
-        attempts++;
-        try {
-          const res = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/qr', { headers: authHeaders() });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.base64) {
-              clearInterval(pollQR);
-              document.getElementById('qrImg').src = data.base64;
-              document.getElementById('qrImg').style.display = 'block';
-              document.getElementById('qrLoading').style.display = 'none';
-            }
-          }
-        } catch {}
-        if (attempts > 30) clearInterval(pollQR);
-      }, 1000);
+    // Calling reuses the WAHA WhatsApp session (same QR): the button just opens the main dashboard
+    // where that session is started / paired.
+    document.getElementById('btnPair').addEventListener('click', () => {
+      window.location.href = '/';
     });
-
     document.getElementById('btnCloseQR').addEventListener('click', () => {
       document.getElementById('qrModal').style.display = 'none';
       checkStatus();

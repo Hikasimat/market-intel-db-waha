@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -11,44 +10,63 @@ import (
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/signaling"
 	"wacalls/internal/voip/wanode"
-	"wacalls/internal/wa"
 
-	"github.com/mdp/qrterminal/v3"
-	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
 )
 
+// Session represents one WAHA (Baileys) WhatsApp session whose socket is bridged
+// into the calling engine. It does not own a WhatsApp connection.
 type Session struct {
 	id   string
 	name string
 	mgr  *SessionManager
 	log  *slog.Logger
 
-	client *whatsmeow.Client
-	reg    *callRegistry
+	reg *callRegistry
 
 	mu   sync.Mutex
+	sock core.VoipSocket
+	jid  string
 	auth AuthSnapshot
 }
 
-func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
-	s := &Session{
-		id:     id,
-		name:   name,
-		mgr:    mgr,
-		log:    mgr.log.With("session", id),
-		client: client,
-		auth:   AuthSnapshot{State: "connecting"},
-		reg:    newCallRegistry(),
+func newSession(mgr *SessionManager, id, name string, sock core.VoipSocket, jid string) *Session {
+	return &Session{
+		id:   id,
+		name: name,
+		mgr:  mgr,
+		log:  mgr.log.With("session", id),
+		sock: sock,
+		jid:  jid,
+		auth: AuthSnapshot{State: "open", Paired: true},
+		reg:  newCallRegistry(),
 	}
-	client.AddEventHandler(s.handleEvent)
-	return s
+}
+
+// update swaps the bridged socket (e.g. after a Baileys reconnect) without dropping the session.
+func (s *Session) update(sock core.VoipSocket, jid string) {
+	s.mu.Lock()
+	s.sock = sock
+	s.jid = jid
+	s.mu.Unlock()
+	s.setAuth(AuthSnapshot{State: "open", Paired: true})
+}
+
+func (s *Session) socket() core.VoipSocket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sock
+}
+
+func (s *Session) connected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.auth.Paired && s.sock != nil
 }
 
 func (s *Session) createCall(callID string) *call.CallManager {
-	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
+	cm := call.NewCallManager(s.socket(), s.log)
 	s.wireCall(cm, callID)
 	s.reg.add(callID, &activeCall{cm: cm})
 	return cm
@@ -114,18 +132,18 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 	return s.reg.get(callID)
 }
 
-func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
-	node := wrapCall(evt.From, evt.Data)
+func (s *Session) onIncomingOffer(ctx context.Context, from types.JID, data *waBinary.Node) {
+	node := wrapCall(from, data)
 	callID := callIDFromNode(node)
 	if callID == "" {
 		return
 	}
 	if max := s.mgr.maxCalls; max > 0 && s.reg.count() >= max {
-		s.rejectOffer(ctx, node, evt.From)
+		s.rejectOffer(ctx, node, from)
 		return
 	}
 	cm := s.createCall(callID)
-	cm.HandleCallOffer(ctx, node, evt.From)
+	cm.HandleCallOffer(ctx, node, from)
 }
 
 func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from types.JID) {
@@ -138,76 +156,30 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 		creator = from.String()
 	}
 	reject := signaling.BuildRejectStanza(from, info.CallID, wanode.MustJID(creator))
-	_ = wa.NewSocket(s.client).SendNode(ctx, reject)
+	_ = s.socket().SendNode(ctx, reject)
 	s.log.Info("inbound call rejected: session at capacity", "call_id", info.CallID)
 }
 
-func (s *Session) handleEvent(rawEvt any) {
+// handleCallEvent dispatches a raw WhatsApp call stanza (forwarded by the Baileys socket).
+// kind is the child tag of the <call> node: offer, accept, transport, terminate, reject.
+func (s *Session) handleCallEvent(kind string, from types.JID, data *waBinary.Node) {
 	ctx := context.Background()
-	switch evt := rawEvt.(type) {
-	case *events.Connected:
-		if id := s.client.Store.ID; id != nil {
-			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
+	switch kind {
+	case "offer":
+		s.onIncomingOffer(ctx, from, data)
+	case "accept":
+		if ac, ok := s.callForEvent(from, data); ok {
+			ac.cm.HandleCallAccept(ctx, wrapCall(from, data), from)
 		}
-		s.setAuth(AuthSnapshot{State: "open", Paired: true})
-	case *events.LoggedOut:
-		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
-	case *events.CallOffer:
-		s.onIncomingOffer(ctx, evt)
-	case *events.CallAccept:
-		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
-			ac.cm.HandleCallAccept(ctx, wrapCall(evt.From, evt.Data), evt.From)
+	case "transport":
+		if ac, ok := s.callForEvent(from, data); ok {
+			ac.cm.HandleCallTransport(ctx, wrapCall(from, data), from)
 		}
-	case *events.CallTransport:
-		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
-			ac.cm.HandleCallTransport(ctx, wrapCall(evt.From, evt.Data), evt.From)
-		}
-	case *events.CallTerminate:
-		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
-			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
-		}
-	case *events.CallReject:
-		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
-			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
+	case "terminate", "reject":
+		if ac, ok := s.callForEvent(from, data); ok {
+			ac.cm.HandleCallTerminate(wrapCall(from, data))
 		}
 	}
-}
-
-func (s *Session) connect(ctx context.Context) error {
-	if s.client.Store.ID != nil {
-		return s.client.Connect()
-	}
-	return s.startPairing(ctx)
-}
-
-func (s *Session) startPairing(ctx context.Context) error {
-	s.log.Info("starting pairing process...")
-	qrChan, err := s.client.GetQRChannel(ctx)
-	if err != nil {
-		return err
-	}
-	if err := s.client.Connect(); err != nil {
-		return err
-	}
-	go func() {
-		for evt := range qrChan {
-			switch evt.Event {
-			case "code":
-				s.log.Info("scan the QR code to pair this session")
-				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-				s.setAuth(AuthSnapshot{State: "qr", QR: evt.Code})
-				s.mgr.broker.emitSessionQR(s.id, evt.Code)
-			case "success":
-				if id := s.client.Store.ID; id != nil {
-					_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
-				}
-				s.setAuth(AuthSnapshot{State: "open", Paired: true})
-			case "timeout":
-				s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
-			}
-		}
-	}()
-	return nil
 }
 
 func (s *Session) setAuth(a AuthSnapshot) {
@@ -221,12 +193,9 @@ func (s *Session) setAuth(a AuthSnapshot) {
 func (s *Session) info() SessionInfo {
 	s.mu.Lock()
 	a := s.auth
+	jid := s.jid
 	s.mu.Unlock()
-	jid := ""
-	if id := s.client.Store.ID; id != nil {
-		jid = id.String()
-	}
-	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
+	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired}
 }
 
 func (s *Session) setBridge(callID string, b *Bridge) {
@@ -267,16 +236,14 @@ func (s *Session) teardownAllCalls() {
 	}
 }
 
-func (s *Session) replaceClient(client *whatsmeow.Client) {
+// disconnect is invoked when the underlying Baileys session closes.
+func (s *Session) disconnect() {
 	s.teardownAllCalls()
-	s.client.Disconnect()
-	s.client = client
-	client.AddEventHandler(s.handleEvent)
+	s.setAuth(AuthSnapshot{State: "disconnected", Paired: false})
 }
 
 func (s *Session) shutdown() {
 	s.teardownAllCalls()
-	s.client.Disconnect()
 }
 
 func mapStatus(state core.CallState) CallStatus {

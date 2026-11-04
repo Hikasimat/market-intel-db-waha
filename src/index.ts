@@ -4,6 +4,7 @@ import { logger } from './logger.js';
 import { createApp } from './server.js';
 import { sessionManager } from './manager/session-mgr.js';
 import { callingService } from './calling/calling-service.js';
+import { waCallsProcess } from './calling/go-process.js';
 
 async function bootstrap() {
   logger.info(`WAHA-NoWeb-Light starting up...`);
@@ -27,6 +28,9 @@ async function bootstrap() {
     if (config.webhookUrl) {
       logger.info(`📡 Default webhook configured: ${config.webhookUrl} for [${config.webhookEvents.join(', ')}]`);
     }
+
+    // Start the bundled VoIP engine before sessions reconnect (active only when CALLING_ENABLED=true)
+    waCallsProcess.start();
 
     // Restore sessions that were previously active
     await sessionManager.restoreExistingSessions();
@@ -52,6 +56,7 @@ async function bootstrap() {
 
     try {
       callingService.shutdown();
+      waCallsProcess.stop();
       await sessionManager.shutdownAll();
     } catch (err: any) {
       logger.error(`Error during session shutdown: ${err.message}`);

@@ -19,10 +19,9 @@ func (s *server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
-	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
-	mux.HandleFunc("DELETE /api/sessions/{sid}", s.handleSessionDelete)
-	mux.HandleFunc("POST /api/sessions/{sid}/logout", s.handleSessionLogout)
-	mux.HandleFunc("POST /api/sessions/{sid}/pair", s.handleSessionPair)
+	mux.HandleFunc("POST /api/bridge/sessions", s.handleBridgeRegister)
+	mux.HandleFunc("DELETE /api/bridge/sessions/{name}", s.handleBridgeDisconnect)
+	mux.HandleFunc("POST /api/bridge/sessions/{sid}/events", s.handleBridgeEvent)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls", s.handleStartCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
@@ -106,45 +105,48 @@ func (s *server) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": s.sessions.infos()})
 }
 
-func (s *server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"name"`
+func (s *server) handleBridgeRegister(w http.ResponseWriter, r *http.Request) {
+	var body BridgeRegistration
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	name := strings.TrimSpace(body.Name)
-	if name == "" {
-		name = "Session"
-	}
-	id, err := s.sessions.Create(name)
+	sess, err := s.sessions.Upsert(body)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id})
-}
-
-func (s *server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.sessions.Delete(r.Context(), r.PathValue("sid")); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *server) handleSessionLogout(w http.ResponseWriter, r *http.Request) {
-	if err := s.sessions.Logout(r.Context(), r.PathValue("sid")); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *server) handleSessionPair(w http.ResponseWriter, r *http.Request) {
-	if err := s.sessions.Pair(r.PathValue("sid")); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	writeJSON(w, http.StatusOK, sess.info())
+}
+
+func (s *server) handleBridgeDisconnect(w http.ResponseWriter, r *http.Request) {
+	s.sessions.Disconnect(r.PathValue("name"))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleBridgeEvent receives raw call stanzas forwarded by the Baileys socket.
+func (s *server) handleBridgeEvent(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var body struct {
+		Type string   `json:"type"`
+		From string   `json:"from"`
+		Data jsonNode `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	from, err := types.ParseJID(body.From)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid from jid"})
+		return
+	}
+	data := decodeNode(body.Data)
+	w.WriteHeader(http.StatusNoContent)
+	go sess.handleCallEvent(body.Type, from, &data)
 }
 
 func (s *server) handleStartCall(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +186,7 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Request) {
-	if sess.client.Store.ID == nil {
+	if !sess.connected() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not paired"})
 		return
 	}

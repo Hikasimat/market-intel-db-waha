@@ -1,3 +1,4 @@
+import { nodeToJson, jsonToNode } from '../../src/calling/bridge.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WaCallsClient } from '../../src/calling/wacalls-client.js';
 import { WaCallsEventConsumer } from '../../src/calling/event-consumer.js';
@@ -186,19 +187,56 @@ describe('WhatsApp Live Voice Calling Subsystem', () => {
       expect(mockEvents.registerSessionMapping).toHaveBeenCalledWith('sess_existing_1', 'user_16');
     });
 
-    it('should create new session when no matching session exists', async () => {
+    it('should resolve the bridged calling_<session> engine session', async () => {
       const mockClient = {
-        listSessions: vi.fn().mockResolvedValue([]),
-        createSession: vi.fn().mockResolvedValue('new_session_id_789'),
+        listSessions: vi.fn().mockResolvedValue([
+          { id: 'bridged_1', name: 'calling_user_16', jid: '123:40@s.whatsapp.net', state: 'open', paired: true },
+        ]),
       } as any;
       const mockEvents = { registerSessionMapping: vi.fn() } as any;
 
       const service = new CallingService(mockClient, mockEvents);
       const sess = await service.getOrResolveCallingSession('user_16');
 
-      expect(sess.id).toBe('new_session_id_789');
-      expect(mockClient.createSession).toHaveBeenCalledWith('calling_user_16');
-      expect(mockEvents.registerSessionMapping).toHaveBeenCalledWith('new_session_id_789', 'user_16');
+      expect(sess.id).toBe('bridged_1');
+      expect(mockEvents.registerSessionMapping).toHaveBeenCalledWith('bridged_1', 'user_16');
+    });
+
+    it('should fail clearly (and never create a separate login) when the WAHA session is not connected', async () => {
+      const mockClient = {
+        listSessions: vi.fn().mockResolvedValue([]),
+        createSession: vi.fn(),
+      } as any;
+      const mockEvents = { registerSessionMapping: vi.fn() } as any;
+
+      const service = new CallingService(mockClient, mockEvents);
+
+      await expect(service.getOrResolveCallingSession('user_16')).rejects.toThrow('is not connected');
+      expect(mockClient.createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('CallingBridge node codec', () => {
+    it('should round-trip binary nodes (attrs, string, bytes and nested children)', () => {
+      const node: any = {
+        tag: 'offer',
+        attrs: { 'call-id': 'ABC', 'call-creator': '919876543210@s.whatsapp.net' },
+        content: [
+          { tag: 'enc', attrs: { type: 'pkmsg', v: '2' }, content: new Uint8Array([1, 2, 3, 250]) },
+          { tag: 'video', attrs: {} },
+          { tag: 'note', attrs: {}, content: 'hello' },
+        ],
+      };
+
+      const json = nodeToJson(node);
+      const back: any = jsonToNode(JSON.parse(JSON.stringify(json)));
+
+      expect(back.tag).toBe('offer');
+      expect(back.attrs['call-id']).toBe('ABC');
+      expect(back.content).toHaveLength(3);
+      expect(Buffer.from(back.content[0].content).equals(Buffer.from([1, 2, 3, 250]))).toBe(true);
+      expect(back.content[1].content).toBeUndefined();
+      expect(back.content[2].content).toBe('hello');
     });
   });
 });

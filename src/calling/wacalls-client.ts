@@ -48,55 +48,6 @@ export class WaCallsClient {
     return data.sessions || [];
   }
 
-  public async createSession(name: string): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api/sessions`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({ name }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Failed to create WaCalls session: HTTP ${res.status} - ${err}`);
-    }
-    const data = (await res.json()) as { id: string };
-    return data.id;
-  }
-
-  public async deleteSession(sessionId: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`, {
-      method: 'DELETE',
-      headers: this.headers(),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok && res.status !== 404) {
-      throw new Error(`Failed to delete WaCalls session ${sessionId}: HTTP ${res.status}`);
-    }
-  }
-
-  public async pairSession(sessionId: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/pair`, {
-      method: 'POST',
-      headers: this.headers(),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Failed to pair WaCalls session ${sessionId}: HTTP ${res.status} - ${err}`);
-    }
-  }
-
-  public async logoutSession(sessionId: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/logout`, {
-      method: 'POST',
-      headers: this.headers(),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok && res.status !== 404) {
-      throw new Error(`Failed to logout WaCalls session ${sessionId}: HTTP ${res.status}`);
-    }
-  }
-
   public async startOutgoingCall(sessionId: string, phone: string, clientId?: string): Promise<{ callId: string }> {
     const extraHeaders: Record<string, string> = {};
     if (clientId) {

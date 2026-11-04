@@ -10,17 +10,15 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
-	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/store"
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "HTTP listen address")
-	dbPath := flag.String("db", "wacalls.db", "SQLite session database path")
+	addr := flag.String("addr", "127.0.0.1:8080", "HTTP listen address")
+	_ = flag.String("db", "", "deprecated: the engine no longer keeps its own WhatsApp login (kept for CLI compatibility)")
 	staticDir := flag.String("static", "client/dist", "static client directory (optional)")
 	debug := flag.Bool("debug", false, "verbose logging")
 	maxCalls := flag.Int("max-calls-per-session", 8, "max concurrent calls per session (0 = unlimited)")
+	bridgeURL := flag.String("bridge-url", "", "base URL of the Node.js host exposing /internal/bridge/rpc (env WACALLS_BRIDGE_URL)")
 	flag.Parse()
 
 	level := slog.LevelInfo
@@ -33,35 +31,28 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Update WhatsApp Web client version dynamically or use tested fallback
-	verCtx, verCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	latestVer, err := whatsmeow.GetLatestVersion(verCtx, nil)
-	verCancel()
-	if err != nil || latestVer == nil {
-		log.Warn("could not fetch latest WhatsApp version dynamically, using fallback 2.3000.1043857760", "err", err)
-		store.SetWAVersion(store.WAVersionContainer{2, 3000, 1043857760})
-	} else {
-		log.Info("updated WhatsApp Web version", "version", latestVer)
-		store.SetWAVersion(*latestVer)
+	base := *bridgeURL
+	if base == "" {
+		base = os.Getenv("WACALLS_BRIDGE_URL")
 	}
+	if base == "" {
+		base = "http://127.0.0.1:3000"
+	}
+	rpc := newRPCClient(base, os.Getenv("WACALLS_INTERNAL_TOKEN"))
 
-	srv, err := newServer(ctx, *dbPath, *staticDir, *maxCalls, log)
+	srv, err := newServer(ctx, *staticDir, *maxCalls, rpc, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
 		os.Exit(1)
 	}
 	defer srv.sessions.disconnectAll()
 
-	if err := srv.sessions.Restore(ctx); err != nil {
-		log.Error("session restore failed", "err", err)
-		os.Exit(1)
-	}
-
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
 	go func() {
-		log.Info("HTTP server listening", "addr", *addr)
+		log.Info("HTTP server listening (Baileys-bridged mode)", "addr", *addr, "bridge", base)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("http server error", "err", err)
+			stop()
 		}
 	}()
 

@@ -16,7 +16,7 @@ describe('AppConfig', () => {
     expect(conf.webhookEvents).toContain('*');
     expect(conf.autoStartSession).toBe('default');
     expect(conf.callingEnabled).toBe(false);
-    expect(conf.wacallsUrl).toBe('http://wacalls:8080');
+    expect(conf.wacallsUrl).toBe('http://127.0.0.1:8080');
     expect(conf.wacallsToken).toBe('');
 
     process.env = originalEnv;

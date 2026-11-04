@@ -18,6 +18,7 @@ import { resolveMediaBuffer, downloadAndSaveMedia, type MediaFileInput } from '.
 import { createChildLogger } from '../logger.js';
 import { config } from '../config.js';
 import { webhookDispatcher } from '../webhooks/dispatcher.js';
+import { callingBridge } from '../calling/bridge.js';
 
 export function toBaileysJid(chatId: string): string {
   let cleaned = chatId.trim();
@@ -179,6 +180,8 @@ export class WhatsappSession extends EventEmitter {
           this.qrBase64 = null;
           this.setStatus(SessionStatus.WORKING);
           this.logger.info(`Session ${this.name} connected successfully! Phone: ${this.getMe()?.phone}`);
+          // Live voice calling bridge: reuses this authenticated socket (no-op unless CALLING_ENABLED=true)
+          if (this.sock) void callingBridge.onConnectionOpen(this.name, this.sock);
           webhookDispatcher.dispatch('session.connected', this.name, {
             session: this.name,
             me: this.getMe(),
@@ -191,6 +194,7 @@ export class WhatsappSession extends EventEmitter {
           const isLoggedOut = statusCode === DisconnectReason.loggedOut;
 
           this.logger.warn(`Connection closed. Status code: ${statusCode}. Logged out: ${isLoggedOut}`);
+          void callingBridge.onConnectionClose(this.name);
           webhookDispatcher.dispatch('session.disconnected', this.name, {
             session: this.name,
             statusCode,
@@ -610,6 +614,7 @@ export class WhatsappSession extends EventEmitter {
       this.sock.ev.removeAllListeners('creds.update');
       this.sock.ev.removeAllListeners('messages.upsert');
       this.sock.ev.removeAllListeners('call');
+      void callingBridge.onConnectionClose(this.name);
       this.sock.end(undefined);
       this.sock = null;
     }
