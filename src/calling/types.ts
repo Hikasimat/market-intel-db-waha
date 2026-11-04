@@ -39,3 +39,4 @@ export interface VoiceCallWebhookPayload {
   durationMs?: number;
   reason?: string;
 }
+

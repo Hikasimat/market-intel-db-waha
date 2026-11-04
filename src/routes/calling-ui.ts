@@ -672,3 +672,4 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
 
   res.send(html);
 });
+

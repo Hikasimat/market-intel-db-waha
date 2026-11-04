@@ -547,6 +547,72 @@ async def whatsapp_webhook(request: Request):
 
 ---
 
+## 📞 Live WhatsApp Voice Calling & Webhook Integration
+
+WAHA includes an isolated high-performance Go VoIP microservice (`wacalls-service`) that enables real-time bidirectional WhatsApp voice calling using Pion WebRTC, MLow audio codec, and SRTP transport.
+
+### 1. Configuration
+
+Enable calling in your `.env` or `docker-compose.yaml`:
+
+```env
+CALLING_ENABLED=true
+WACALLS_INTERNAL_URL=http://wacalls:8080
+WACALLS_INTERNAL_TOKEN=wacalls_internal_secret_2026
+```
+
+### 2. Browser VoIP Console (`/calls`)
+
+Access the web phone interface directly in your browser at `http://localhost:3000/calls`:
+- **Dual Pairing:** Pair the calling engine independently using Linked Devices QR code without logging out Baileys messaging.
+- **AudioWorklets:** 16 kHz Float32/Int16 PCM real-time capture and playback ring buffer.
+- **WebRTC DataChannel:** Zero audio lag via direct WebRTC data transport.
+- **Full Controls:** Inbound popup notification, duration timer, mute/unmute, and hang up.
+
+### 3. Voice Calling Webhooks
+
+Call lifecycle updates are automatically dispatched to your `WHATSAPP_HOOK_URL`:
+
+| Event | Description |
+|---|---|
+| `call.voice.incoming` | Inbound voice call received with `callId` and caller `peer` |
+| `call.voice.ringing` | Outbound or inbound call is ringing |
+| `call.voice.active` | Two-way audio transport established |
+| `call.voice.rejected` | Call rejected |
+| `call.voice.ended` | Call terminated (includes duration and reason) |
+
+#### Example `call.voice.incoming` Payload:
+```json
+{
+  "id": "evt_1793778134467_abc123",
+  "timestamp": 1793778134467,
+  "event": "call.voice.incoming",
+  "session": "user_16",
+  "engine": "WACALLS",
+  "payload": {
+    "sessionId": "363fc4ef9dac10a07659eed70f212547",
+    "sessionName": "calling_user_16",
+    "callId": "3EB048386F5B2F109003619221",
+    "peer": "919876543210@s.whatsapp.net"
+  }
+}
+```
+
+### 4. Calling REST API Endpoints
+
+All endpoints require `X-Api-Key`:
+
+- **Session Status:** `GET /api/calling/sessions/:session/status`
+- **Request QR Pairing:** `POST /api/calling/sessions/:session/pair`
+- **Get QR Code:** `GET /api/calling/sessions/:session/qr`
+- **Initiate Outbound Call:** `POST /api/calling/sessions/:session/calls` (`{"phone": "919876543210"}`)
+- **Accept Incoming Call:** `POST /api/calling/sessions/:session/calls/:callId/accept`
+- **Reject Incoming Call:** `POST /api/calling/sessions/:session/calls/:callId/reject`
+- **Hang Up Call:** `DELETE /api/calling/sessions/:session/calls/:callId`
+- **WebRTC SDP Exchange:** `POST /api/calling/sessions/:session/calls/:callId/webrtc` (`{"sdp_offer": "..."}`)
+
+---
+
 ## 🧪 Automated Tests
 
 Run the complete test suite (unit, e2e, concurrency isolation, and performance benchmarks):
