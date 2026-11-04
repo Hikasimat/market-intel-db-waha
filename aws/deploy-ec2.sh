@@ -24,9 +24,11 @@ cd /home/ubuntu/waha-noweb-light
 # 4. Authenticate to Amazon ECR
 echo "__ECR_PASSWORD__" | docker login --username AWS --password-stdin "__REGISTRY__"
 
-# 5. Pull latest container image
+# 5. Pull latest container images
 echo "Pulling Docker image: __IMAGE_URI__"
 docker pull "__IMAGE_URI__"
+echo "Pulling Docker image: __WACALLS_IMAGE_URI__"
+docker pull "__WACALLS_IMAGE_URI__"
 
 # 6. Generate production docker-compose.prod.yaml
 cat << 'COMPOSE_EOF' > docker-compose.prod.yaml
@@ -54,6 +56,8 @@ services:
       - CALLING_ENABLED=true
       - WACALLS_INTERNAL_URL=http://wacalls:8080
       - WACALLS_INTERNAL_TOKEN=wacalls_internal_secret_2026
+    depends_on:
+      - wacalls
     volumes:
       - waha_prod_sessions:/app/.sessions
       - waha_prod_media:/app/.media
@@ -63,11 +67,25 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  wacalls:
+    image: __WACALLS_IMAGE_URI__
+    container_name: wacalls-service
+    restart: unless-stopped
+    command: ["/app/wacalls", "-addr", ":8080", "-db", "/data/wacalls.db"]
+    expose:
+      - "8080"
+    environment:
+      - WACALLS_INTERNAL_TOKEN=wacalls_internal_secret_2026
+    volumes:
+      - wacalls_prod_data:/data
+
 volumes:
   waha_prod_sessions:
     name: waha_prod_sessions
   waha_prod_media:
     name: waha_prod_media
+  wacalls_prod_data:
+    name: wacalls_prod_data
 COMPOSE_EOF
 
 # 7. Start/recreate container
