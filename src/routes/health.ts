@@ -908,7 +908,7 @@ const isTamperProof = crypto.timingSafeEqual(
     function renderDashboard(data) {
       document.getElementById('headerSyncTime').innerText = 'Live Sync: ' + new Date().toLocaleTimeString();
 
-      const primarySession = data.sessions[0];
+      const primarySession = data.sessions.find(s => s.status === 'WORKING') || data.sessions.find(s => s.status === 'STARTING') || data.sessions[0];
       if (primarySession) {
         const isConnected = primarySession.status === 'WORKING';
         const isScanning = primarySession.status === 'SCAN_QR_CODE';
