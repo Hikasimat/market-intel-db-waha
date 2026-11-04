@@ -124,6 +124,13 @@ export class CallingService {
 
   public async startCall(wahaSessionName: string, phone: string, clientId?: string): Promise<{ callId: string }> {
     const sess = await this.getOrResolveCallingSession(wahaSessionName);
+    const auth = this.events.getAuthState(sess.id);
+    const isPaired = auth?.paired ?? sess.paired;
+    if (!isPaired) {
+      throw new Error(
+        `Calling session for "${wahaSessionName}" is not paired to WhatsApp yet. Please visit ${config.baseUrl}/calls to link the calling session via QR code first.`
+      );
+    }
     return await this.client.startOutgoingCall(sess.id, phone, clientId);
   }
 
