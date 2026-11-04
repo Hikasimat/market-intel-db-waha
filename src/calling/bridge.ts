@@ -146,6 +146,7 @@ export class CallingBridge {
       return false;
     }
   }
+
   public async onConnectionClose(wahaSession: string): Promise<void> {
     if (!config.callingEnabled) return;
     this.sockets.delete(wahaSession);
@@ -173,7 +174,12 @@ export class CallingBridge {
       fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/events`, {
         method: 'POST',
         headers: internalHeaders(),
-        body: JSON.stringify({ type: child.tag, from, data: nodeToJson(child) }),
+        body: JSON.stringify({
+          type: child.tag,
+          from,
+          id: node.attrs?.id || '',
+          data: nodeToJson(child),
+        }),
         signal: AbortSignal.timeout(8000),
       }).catch((err) => logger.warn(`[${wahaSession}] Failed to forward call stanza '${child.tag}': ${err.message}`));
     } catch (err: any) {
@@ -234,6 +240,17 @@ export class CallingBridge {
         });
         const plaintext = unpadRandomMax16(decrypted);
         return { plaintext: Buffer.from(plaintext).toString('base64') };
+      }
+      case 'resolveLID': {
+        const pn = params.pn;
+        if (!pn) return { lid: '' };
+        try {
+          const res = await (sock as any).onWhatsApp(pn);
+          const match = res?.find((r: any) => r.exists && r.lid);
+          return { lid: match?.lid || '' };
+        } catch {
+          return { lid: '' };
+        }
       }
       default:
         throw new Error(`Unknown bridge RPC method: ${method}`);

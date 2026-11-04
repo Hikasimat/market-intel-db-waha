@@ -295,6 +295,17 @@ func (s *bridgeSocket) GetTCToken(ctx context.Context, jid types.JID) ([]byte, e
 }
 
 func (s *bridgeSocket) ResolveLIDForPN(ctx context.Context, pn types.JID) types.JID {
+	if pn.Server == types.HiddenUserServer {
+		return pn
+	}
+	var res struct {
+		LID string `json:"lid"`
+	}
+	_ = s.rpc.call(ctx, s.name, "resolveLID", map[string]any{"pn": pn.User}, &res)
+	if res.LID != "" {
+		if lid, err := types.ParseJID(res.LID); err == nil && !lid.IsEmpty() {
+			return lid.ToNonAD()
+		}
+	}
 	return pn
 }
-

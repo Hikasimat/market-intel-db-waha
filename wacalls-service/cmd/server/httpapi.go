@@ -133,6 +133,7 @@ func (s *server) handleBridgeEvent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Type string   `json:"type"`
 		From string   `json:"from"`
+		ID   string   `json:"id"`
 		Data jsonNode `json:"data"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -146,7 +147,7 @@ func (s *server) handleBridgeEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	data := decodeNode(body.Data)
 	w.WriteHeader(http.StatusNoContent)
-	go sess.handleCallEvent(body.Type, from, &data)
+	go sess.handleCallEvent(body.Type, from, body.ID, &data)
 }
 
 func (s *server) handleStartCall(w http.ResponseWriter, r *http.Request) {

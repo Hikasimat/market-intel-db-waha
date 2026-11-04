@@ -28,7 +28,12 @@ type Bridge struct {
 }
 
 func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	cfg := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{URLs: []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}},
+		},
+	}
+	pc, err := webrtc.NewPeerConnection(cfg)
 	if err != nil {
 		return nil, "", err
 	}

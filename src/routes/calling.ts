@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { apiKeyAuth } from '../middleware/auth.js';
 import { callingService } from '../calling/calling-service.js';
+import { waCallsEvents } from '../calling/event-consumer.js';
 import { config } from '../config.js';
 
 export const callingRouter = Router();
@@ -31,6 +32,54 @@ callingRouter.get('/api/calling/sessions/:session/status', async (req: Request, 
   }
 });
 
+// GET /api/calling/sessions/:session/events - Server-Sent Events stream for live call events
+callingRouter.get('/api/calling/sessions/:session/events', (req: Request, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+  res.flushHeaders?.();
+
+  const sessionName = req.params.session;
+
+  const sendEvent = (event: string, data: any) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const onRinging = ({ sessionName: sName, payload }: any) => {
+    if (sName === sessionName || !sName) sendEvent('call-ringing', payload);
+  };
+  const onActive = ({ sessionName: sName, payload }: any) => {
+    if (sName === sessionName || !sName) sendEvent('call-active', payload);
+  };
+  const onEnded = ({ sessionName: sName, payload }: any) => {
+    if (sName === sessionName || !sName) sendEvent('call-ended', payload);
+  };
+  const onIncoming = ({ sessionName: sName, payload }: any) => {
+    if (sName === sessionName || !sName) sendEvent('incoming', payload);
+  };
+
+  waCallsEvents.on('call-ringing', onRinging);
+  waCallsEvents.on('call-active', onActive);
+  waCallsEvents.on('call-ended', onEnded);
+  waCallsEvents.on('incoming', onIncoming);
+
+  sendEvent('ping', { time: Date.now() });
+
+  const keepAlive = setInterval(() => {
+    res.write(': keepalive\n\n');
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    waCallsEvents.off('call-ringing', onRinging);
+    waCallsEvents.off('call-active', onActive);
+    waCallsEvents.off('call-ended', onEnded);
+    waCallsEvents.off('incoming', onIncoming);
+  });
+});
+
 // POST /api/calling/sessions/:session/pair - Kept for compatibility. Calling reuses the WAHA
 // WhatsApp session (same QR / linked device), so there is nothing separate to pair.
 callingRouter.post('/api/calling/sessions/:session/pair', async (req: Request, res: Response) => {
@@ -54,6 +103,7 @@ callingRouter.get('/api/calling/sessions/:session/qr', (_req: Request, res: Resp
     error: 'Voice calling has no separate QR. It uses the WAHA session QR (GET /api/:session/auth/qr).',
   });
 });
+
 // POST /api/calling/sessions/:session/calls - Initiate outgoing call
 callingRouter.post('/api/calling/sessions/:session/calls', async (req: Request, res: Response) => {
   try {
@@ -137,4 +187,3 @@ callingRouter.get('/api/calling/sessions/:session/history', async (req: Request,
     res.status(500).json({ error: err.message });
   }
 });
-

@@ -364,7 +364,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
     <div id="callScreen" class="card">
       <div class="call-avatar">&#128222;</div>
       <div id="activePeer" class="call-peer">+1234567890</div>
-      <div id="activeCallStatus" class="status-pill pill-green" style="margin-bottom: 12px;">ACTIVE CALL</div>
+      <div id="activeCallStatus" class="status-pill pill-amber" style="margin-bottom: 12px;">DIALING...</div>
       <div id="callTimer" class="call-timer">00:00</div>
 
       <div class="call-actions">
@@ -439,6 +439,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
     const state = {
       session: '${defaultSession}',
       currentCallId: null,
+      incomingCallId: null,
       peerConnection: null,
       dataChannel: null,
       audioCtx: null,
@@ -485,13 +486,28 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
 
-      // 2. Setup RTCPeerConnection with PCM data channel
-      const pc = new RTCPeerConnection({ iceServers: [] });
+      // 2. Setup RTCPeerConnection with Google public STUN servers & PCM data channel
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+        ]
+      });
       state.peerConnection = pc;
+
+      pc.oniceconnectionstatechange = () => {
+        console.log('[WebRTC] ICE Connection State:', pc.iceConnectionState);
+      };
 
       const dc = pc.createDataChannel('pcm', { ordered: true });
       dc.binaryType = 'arraybuffer';
       state.dataChannel = dc;
+
+      dc.onopen = () => {
+        console.log('[WebRTC] Audio PCM DataChannel opened successfully');
+      };
+      dc.onclose = () => {
+        console.log('[WebRTC] Audio PCM DataChannel closed');
+      };
 
       // 3. Setup AudioContext at 16 kHz
       const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -530,9 +546,16 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
 
       await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') resolve();
-        else pc.addEventListener('icegatheringstatechange', () => {
-          if (pc.iceGatheringState === 'complete') resolve();
-        });
+        else {
+          const onGatheringChange = () => {
+            if (pc.iceGatheringState === 'complete') {
+              pc.removeEventListener('icegatheringstatechange', onGatheringChange);
+              resolve();
+            }
+          };
+          pc.addEventListener('icegatheringstatechange', onGatheringChange);
+          setTimeout(resolve, 3000);
+        }
       });
 
       const webrtcRes = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(callId) + '/webrtc', {
@@ -544,13 +567,22 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       const { sdpAnswer } = await webrtcRes.json();
       await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
 
-      // Show call UI & start timer
+      // Show call screen in dialing state
       showCallScreen();
     }
 
     function showCallScreen() {
       document.getElementById('dialerCard').style.display = 'none';
       document.getElementById('callScreen').style.display = 'block';
+      const pill = document.getElementById('activeCallStatus');
+      pill.className = 'status-pill pill-amber';
+      pill.innerText = 'DIALING...';
+      state.seconds = 0;
+      updateTimer();
+    }
+
+    function startTimer() {
+      if (state.timerInterval) clearInterval(state.timerInterval);
       state.seconds = 0;
       updateTimer();
       state.timerInterval = setInterval(() => {
@@ -566,7 +598,10 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
     }
 
     function cleanupCall() {
-      if (state.timerInterval) clearInterval(state.timerInterval);
+      if (state.timerInterval) {
+        clearInterval(state.timerInterval);
+        state.timerInterval = null;
+      }
       if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
       if (state.audioCtx) state.audioCtx.close().catch(() => {});
       if (state.peerConnection) state.peerConnection.close();
@@ -575,17 +610,86 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       state.audioCtx = null;
       state.micStream = null;
       state.currentCallId = null;
+      state.incomingCallId = null;
       state.isMuted = false;
 
       document.getElementById('callScreen').style.display = 'none';
       document.getElementById('dialerCard').style.display = 'block';
       document.getElementById('incomingModal').style.display = 'none';
+      const pill = document.getElementById('activeCallStatus');
+      pill.className = 'status-pill pill-amber';
+      pill.innerText = 'DIALING...';
+    }
+
+    let eventSource = null;
+    function connectSSE() {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      const qs = apiKey ? '?x-api-key=' + encodeURIComponent(apiKey) : '';
+      const url = '/api/calling/sessions/' + encodeURIComponent(state.session) + '/events' + qs;
+      const es = new EventSource(url);
+      eventSource = es;
+
+      es.addEventListener('call-ringing', (e) => {
+        console.log('[SSE] Call ringing:', e.data);
+        const pill = document.getElementById('activeCallStatus');
+        if (pill && state.currentCallId) {
+          pill.className = 'status-pill pill-amber';
+          pill.innerText = 'RINGING...';
+        }
+      });
+
+      es.addEventListener('call-active', (e) => {
+        console.log('[SSE] Call active:', e.data);
+        const pill = document.getElementById('activeCallStatus');
+        if (pill) {
+          pill.className = 'status-pill pill-green';
+          pill.innerText = 'ACTIVE CALL';
+        }
+        startTimer();
+      });
+
+      es.addEventListener('call-ended', (e) => {
+        console.log('[SSE] Call ended:', e.data);
+        const pill = document.getElementById('activeCallStatus');
+        if (pill) {
+          pill.className = 'status-pill pill-red';
+          let reason = '';
+          try {
+            const d = JSON.parse(e.data);
+            if (d.endReason || d.reason) reason = ' (' + (d.endReason || d.reason) + ')';
+          } catch {}
+          pill.innerText = 'CALL ENDED' + reason;
+        }
+        if (state.timerInterval) {
+          clearInterval(state.timerInterval);
+          state.timerInterval = null;
+        }
+        setTimeout(() => {
+          cleanupCall();
+        }, 2200);
+      });
+
+      es.addEventListener('incoming', (e) => {
+        console.log('[SSE] Incoming call:', e.data);
+        try {
+          const d = JSON.parse(e.data);
+          state.incomingCallId = d.callId || d.id;
+          document.getElementById('incomingCallerNumber').innerText = d.peer || 'Unknown';
+          document.getElementById('incomingModal').style.display = 'flex';
+        } catch (err) {
+          console.error('Failed to parse incoming call payload:', err);
+        }
+      });
     }
 
     // Event Listeners
     document.getElementById('selectSession').addEventListener('change', (e) => {
       state.session = e.target.value;
       checkStatus();
+      connectSSE();
     });
 
     document.getElementById('btnStartCall').addEventListener('click', async () => {
@@ -622,6 +726,38 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       cleanupCall();
     });
 
+    document.getElementById('btnAcceptIncoming').addEventListener('click', async () => {
+      if (!state.incomingCallId) return;
+      document.getElementById('incomingModal').style.display = 'none';
+      try {
+        const res = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(state.incomingCallId) + '/accept', {
+          method: 'POST',
+          headers: authHeaders()
+        });
+        const data = await res.json();
+        if (data.callId) {
+          document.getElementById('activePeer').innerText = document.getElementById('incomingCallerNumber').innerText;
+          await startWebRTC(data.callId);
+        }
+      } catch (err) {
+        alert('Failed to accept incoming call: ' + err.message);
+      }
+    });
+
+    document.getElementById('btnRejectIncoming').addEventListener('click', async () => {
+      if (!state.incomingCallId) return;
+      document.getElementById('incomingModal').style.display = 'none';
+      try {
+        await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(state.incomingCallId) + '/reject', {
+          method: 'POST',
+          headers: authHeaders()
+        });
+      } catch (err) {
+        console.error('Failed to decline call:', err);
+      }
+      state.incomingCallId = null;
+    });
+
     document.getElementById('btnMute').addEventListener('click', () => {
       state.isMuted = !state.isMuted;
       document.getElementById('muteText').innerText = state.isMuted ? 'Unmute Mic' : 'Mute Mic';
@@ -638,12 +774,12 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       checkStatus();
     });
 
-    // Initial status check
+    // Initial status check & SSE
     checkStatus();
+    connectSSE();
   </script>
 </body>
 </html>`;
 
   res.send(html);
 });
-

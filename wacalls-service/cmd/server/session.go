@@ -124,16 +124,16 @@ func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo boo
 	return callID, nil
 }
 
-func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall, bool) {
-	callID := callIDFromNode(wrapCall(from, data))
+func (s *Session) callForEvent(from types.JID, id string, data *waBinary.Node) (*activeCall, bool) {
+	callID := callIDFromNode(wrapCall(from, id, data))
 	if callID == "" {
 		return nil, false
 	}
 	return s.reg.get(callID)
 }
 
-func (s *Session) onIncomingOffer(ctx context.Context, from types.JID, data *waBinary.Node) {
-	node := wrapCall(from, data)
+func (s *Session) onIncomingOffer(ctx context.Context, from types.JID, id string, data *waBinary.Node) {
+	node := wrapCall(from, id, data)
 	callID := callIDFromNode(node)
 	if callID == "" {
 		return
@@ -162,22 +162,22 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 
 // handleCallEvent dispatches a raw WhatsApp call stanza (forwarded by the Baileys socket).
 // kind is the child tag of the <call> node: offer, accept, transport, terminate, reject.
-func (s *Session) handleCallEvent(kind string, from types.JID, data *waBinary.Node) {
+func (s *Session) handleCallEvent(kind string, from types.JID, id string, data *waBinary.Node) {
 	ctx := context.Background()
 	switch kind {
 	case "offer":
-		s.onIncomingOffer(ctx, from, data)
+		s.onIncomingOffer(ctx, from, id, data)
 	case "accept":
-		if ac, ok := s.callForEvent(from, data); ok {
-			ac.cm.HandleCallAccept(ctx, wrapCall(from, data), from)
+		if ac, ok := s.callForEvent(from, id, data); ok {
+			ac.cm.HandleCallAccept(ctx, wrapCall(from, id, data), from)
 		}
 	case "transport":
-		if ac, ok := s.callForEvent(from, data); ok {
-			ac.cm.HandleCallTransport(ctx, wrapCall(from, data), from)
+		if ac, ok := s.callForEvent(from, id, data); ok {
+			ac.cm.HandleCallTransport(ctx, wrapCall(from, id, data), from)
 		}
 	case "terminate", "reject":
-		if ac, ok := s.callForEvent(from, data); ok {
-			ac.cm.HandleCallTerminate(wrapCall(from, data))
+		if ac, ok := s.callForEvent(from, id, data); ok {
+			ac.cm.HandleCallTerminate(wrapCall(from, id, data))
 		}
 	}
 }
