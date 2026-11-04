@@ -15,6 +15,9 @@ describe('AppConfig', () => {
     expect(conf.deviceName).toBe('WAHA-Light');
     expect(conf.webhookEvents).toContain('*');
     expect(conf.autoStartSession).toBe('default');
+    expect(conf.callingEnabled).toBe(false);
+    expect(conf.wacallsUrl).toBe('http://wacalls:8080');
+    expect(conf.wacallsToken).toBe('');
 
     process.env = originalEnv;
   });

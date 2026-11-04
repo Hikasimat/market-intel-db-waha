@@ -21,6 +21,9 @@ export interface AppConfig {
   dashboardUsername: string;
   dashboardPassword: string;
   dashboardAuthEnabled: boolean;
+  callingEnabled: boolean;
+  wacallsUrl: string;
+  wacallsToken: string;
 }
 
 export function loadConfig(): AppConfig {
@@ -49,6 +52,11 @@ export function loadConfig(): AppConfig {
   const dashboardPassword = process.env.WAHA_DASHBOARD_PASSWORD?.trim() || apiKey || 'admin';
   const dashboardAuthEnabled = process.env.WAHA_DASHBOARD_AUTH !== 'false';
 
+  // Live WhatsApp Voice Calling (WaCalls integration)
+  const callingEnabled = process.env.CALLING_ENABLED === 'true';
+  const wacallsUrl = process.env.WACALLS_INTERNAL_URL?.trim() || process.env.WACALLS_URL?.trim() || 'http://wacalls:8080';
+  const wacallsToken = process.env.WACALLS_INTERNAL_TOKEN?.trim() || process.env.WACALLS_TOKEN?.trim() || '';
+
   return {
     port,
     host,
@@ -66,6 +74,9 @@ export function loadConfig(): AppConfig {
     dashboardUsername,
     dashboardPassword,
     dashboardAuthEnabled,
+    callingEnabled,
+    wacallsUrl,
+    wacallsToken,
   };
 }
 

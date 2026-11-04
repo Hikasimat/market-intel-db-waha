@@ -22,10 +22,31 @@ services:
       # HTTP Basic Auth credentials for UI Dashboard (prevents unauthorized browser access)
       - WAHA_DASHBOARD_USERNAME=admin
       - WAHA_DASHBOARD_PASSWORD=waha_secure_api_key_2026
+      # Live WhatsApp Voice Calling Integration
+      - CALLING_ENABLED=true
+      - WACALLS_INTERNAL_URL=http://wacalls:8080
+      - WACALLS_INTERNAL_TOKEN=wacalls_internal_secret_2026
+    depends_on:
+      - wacalls
     volumes:
       - waha_sessions:/app/.sessions
       - waha_media:/app/.media
 
+  wacalls:
+    build:
+      context: ./wacalls-service
+      dockerfile: Dockerfile
+    container_name: wacalls-service
+    restart: unless-stopped
+    command: ["/app/wacalls", "-addr", ":8080", "-db", "/data/wacalls.db", "-debug"]
+    expose:
+      - "8080"
+    environment:
+      - WACALLS_INTERNAL_TOKEN=wacalls_internal_secret_2026
+    volumes:
+      - wacalls_data:/data
+
 volumes:
   waha_sessions:
   waha_media:
+  wacalls_data:

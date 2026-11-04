@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { createApp } from './server.js';
 import { sessionManager } from './manager/session-mgr.js';
+import { callingService } from './calling/calling-service.js';
 
 async function bootstrap() {
   logger.info(`WAHA-NoWeb-Light starting up...`);
@@ -30,6 +31,9 @@ async function bootstrap() {
     // Restore sessions that were previously active
     await sessionManager.restoreExistingSessions();
 
+    // Initialize calling subsystem (active only when CALLING_ENABLED=true)
+    callingService.init();
+
     // Auto-start default session so webhook receives QR immediately without user intervention
     if (config.autoStartSession && !sessionManager.getSession(config.autoStartSession)) {
       logger.info(`⚡ Auto-starting session '${config.autoStartSession}' (webhook-first)...`);
@@ -47,6 +51,7 @@ async function bootstrap() {
     logger.info(`${signal} received: closing HTTP server and flushing session state...`);
 
     try {
+      callingService.shutdown();
       await sessionManager.shutdownAll();
     } catch (err: any) {
       logger.error(`Error during session shutdown: ${err.message}`);

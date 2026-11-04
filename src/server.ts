@@ -1,3 +1,4 @@
+import path from 'node:path';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { logger } from './logger.js';
@@ -9,6 +10,8 @@ import { chattingRouter } from './routes/chatting.js';
 import { contactsRouter } from './routes/contacts.js';
 import { groupsRouter } from './routes/groups.js';
 import { filesRouter } from './routes/files.js';
+import { callingRouter } from './routes/calling.js';
+import { callingUIRouter } from './routes/calling-ui.js';
 
 export function createApp(): Express {
   const app = express();
@@ -35,8 +38,11 @@ export function createApp(): Express {
     next();
   });
 
-  // Public health routes
+  // Public health & UI routes
+  app.use('/worklets', express.static(path.resolve('public/worklets')));
+  app.use(express.static(path.resolve('public')));
   app.use(healthRouter);
+  app.use(callingUIRouter);
 
   // Authentication barrier
   app.use(apiKeyAuth);
@@ -48,6 +54,7 @@ export function createApp(): Express {
   app.use(contactsRouter);
   app.use(groupsRouter);
   app.use(filesRouter);
+  app.use(callingRouter);
 
   // 404 Handler
   app.use((req: Request, res: Response) => {
