@@ -45,6 +45,9 @@ services:
       - WAHA_DASHBOARD_USERNAME=__DASHBOARD_USERNAME__
       - WAHA_DASHBOARD_PASSWORD=__DASHBOARD_PASSWORD__
       - WAHA_API_KEY=__DASHBOARD_PASSWORD__
+      - WHATSAPP_HOOK_URL=https://marketinteldbapp.hikasimat.com/api/whatsapp/webhook/
+      - WHATSAPP_HOOK_SECRET=waha_secure_webhook_secret_2026
+      - WHATSAPP_HOOK_EVENTS=*
       - WAHA_WEBHOOK_URL=https://marketinteldbapp.hikasimat.com/api/whatsapp/webhook/
       - WAHA_WEBHOOK_SECRET=waha_secure_webhook_secret_2026
     volumes:

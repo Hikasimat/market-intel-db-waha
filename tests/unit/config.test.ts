@@ -32,4 +32,18 @@ describe('AppConfig', () => {
 
     process.env = originalEnv;
   });
+
+  it('should accept WAHA_WEBHOOK_URL and WAHA_WEBHOOK_SECRET as aliases', () => {
+    const originalEnv = { ...process.env };
+    delete process.env.WHATSAPP_HOOK_URL;
+    delete process.env.WHATSAPP_HOOK_SECRET;
+    process.env.WAHA_WEBHOOK_URL = 'https://marketinteldbapp.hikasimat.com/api/whatsapp/webhook/';
+    process.env.WAHA_WEBHOOK_SECRET = 'waha_secure_webhook_secret_2026';
+
+    const conf = loadConfig();
+    expect(conf.webhookUrl).toBe('https://marketinteldbapp.hikasimat.com/api/whatsapp/webhook/');
+    expect(conf.webhookSecret).toBe('waha_secure_webhook_secret_2026');
+
+    process.env = originalEnv;
+  });
 });
