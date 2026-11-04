@@ -50,6 +50,10 @@ services:
       - WHATSAPP_HOOK_EVENTS=*
       - WAHA_WEBHOOK_URL=https://marketinteldbapp.hikasimat.com/api/whatsapp/webhook/
       - WAHA_WEBHOOK_SECRET=waha_secure_webhook_secret_2026
+      # Live WhatsApp Voice Calling Integration
+      - CALLING_ENABLED=true
+      - WACALLS_INTERNAL_URL=http://wacalls:8080
+      - WACALLS_INTERNAL_TOKEN=wacalls_internal_secret_2026
     volumes:
       - waha_prod_sessions:/app/.sessions
       - waha_prod_media:/app/.media
