@@ -321,7 +321,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       <span class="badge">VOIP</span>
       <div>
         <div class="title">WAHA Live Voice Calling</div>
-        <div class="subtitle">Two-Way Browser Audio &bull; MLow Codec &bull; WebRTC Bridge</div>
+        <div class="subtitle">Two-Way Live Browser Audio &bull; Direct PCM Stream &bull; Low Latency</div>
       </div>
     </div>
     <div class="header-links">
@@ -440,8 +440,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       session: '${defaultSession}',
       currentCallId: null,
       incomingCallId: null,
-      peerConnection: null,
-      dataChannel: null,
+      audioSocket: null,
       audioCtx: null,
       micStream: null,
       timerInterval: null,
@@ -477,8 +476,8 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       }
     }
 
-    // AudioWebRTC Pipeline
-    async function startWebRTC(callId) {
+    // Direct Live Audio Pipeline (Raw PCM 16kHz via WebSocket - bypasses all UDP/NAT/Firewall blocks)
+    async function startAudioPipeline(callId) {
       state.currentCallId = callId;
 
       // 1. Request microphone
@@ -486,30 +485,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
 
-      // 2. Setup RTCPeerConnection with Google public STUN servers & PCM data channel
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
-        ]
-      });
-      state.peerConnection = pc;
-
-      pc.oniceconnectionstatechange = () => {
-        console.log('[WebRTC] ICE Connection State:', pc.iceConnectionState);
-      };
-
-      const dc = pc.createDataChannel('pcm', { ordered: true });
-      dc.binaryType = 'arraybuffer';
-      state.dataChannel = dc;
-
-      dc.onopen = () => {
-        console.log('[WebRTC] Audio PCM DataChannel opened successfully');
-      };
-      dc.onclose = () => {
-        console.log('[WebRTC] Audio PCM DataChannel closed');
-      };
-
-      // 3. Setup AudioContext at 16 kHz
+      // 2. Setup AudioContext at 16 kHz
       const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       state.audioCtx = ctx;
 
@@ -517,12 +493,32 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       await ctx.audioWorklet.addModule('/worklets/playback-processor.js');
       await ctx.resume();
 
-      // Mic capture
+      // 3. Connect resilient WebSocket audio stream
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const qs = apiKey ? '?x-api-key=' + encodeURIComponent(apiKey) : '';
+      const wsUrl = protocol + '//' + window.location.host + '/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(callId) + '/socket' + qs;
+
+      console.log('[AudioSocket] Connecting to live audio gateway:', wsUrl);
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+      state.audioSocket = ws;
+
+      ws.onopen = () => {
+        console.log('[AudioSocket] Connected to audio stream successfully');
+      };
+      ws.onclose = () => {
+        console.log('[AudioSocket] Audio stream closed');
+      };
+      ws.onerror = (e) => {
+        console.error('[AudioSocket] Audio stream error:', e);
+      };
+
+      // Mic capture -> WebSocket
       const micSource = ctx.createMediaStreamSource(state.micStream);
       const captureNode = new AudioWorkletNode(ctx, 'capture-processor');
       captureNode.port.onmessage = (e) => {
-        if (!state.isMuted && dc.readyState === 'open') {
-          dc.send(float32ToInt16LE(e.data));
+        if (!state.isMuted && ws.readyState === WebSocket.OPEN) {
+          ws.send(float32ToInt16LE(e.data));
         }
       };
       micSource.connect(captureNode);
@@ -533,42 +529,12 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       captureNode.connect(silenceGain);
       silenceGain.connect(ctx.destination);
 
-      // Playback
+      // WebSocket -> Playback speaker
       const playbackNode = new AudioWorkletNode(ctx, 'playback-processor');
       playbackNode.connect(ctx.destination);
-      dc.onmessage = (e) => {
+      ws.onmessage = (e) => {
         playbackNode.port.postMessage(int16LEToFloat32(e.data));
       };
-
-      // 4. SDP Offer / Answer exchange
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      await new Promise((resolve) => {
-        if (pc.iceGatheringState === 'complete') resolve();
-        else {
-          const onGatheringChange = () => {
-            if (pc.iceGatheringState === 'complete') {
-              pc.removeEventListener('icegatheringstatechange', onGatheringChange);
-              resolve();
-            }
-          };
-          pc.addEventListener('icegatheringstatechange', onGatheringChange);
-          setTimeout(resolve, 3000);
-        }
-      });
-
-      const webrtcRes = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(callId) + '/webrtc', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ sdp_offer: pc.localDescription.sdp })
-      });
-
-      const { sdpAnswer } = await webrtcRes.json();
-      await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
-
-      // Show call screen in dialing state
-      showCallScreen();
     }
 
     function showCallScreen() {
@@ -602,13 +568,18 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
         clearInterval(state.timerInterval);
         state.timerInterval = null;
       }
-      if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
-      if (state.audioCtx) state.audioCtx.close().catch(() => {});
-      if (state.peerConnection) state.peerConnection.close();
-      state.peerConnection = null;
-      state.dataChannel = null;
-      state.audioCtx = null;
-      state.micStream = null;
+      if (state.audioSocket) {
+        try { state.audioSocket.close(); } catch {}
+        state.audioSocket = null;
+      }
+      if (state.micStream) {
+        state.micStream.getTracks().forEach(t => t.stop());
+        state.micStream = null;
+      }
+      if (state.audioCtx) {
+        try { state.audioCtx.close(); } catch {}
+        state.audioCtx = null;
+      }
       state.currentCallId = null;
       state.incomingCallId = null;
       state.isMuted = false;
@@ -635,7 +606,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       es.addEventListener('call-ringing', (e) => {
         console.log('[SSE] Call ringing:', e.data);
         const pill = document.getElementById('activeCallStatus');
-        if (pill && state.currentCallId) {
+        if (pill) {
           pill.className = 'status-pill pill-amber';
           pill.innerText = 'RINGING...';
         }
@@ -700,6 +671,7 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       }
       try {
         document.getElementById('activePeer').innerText = phone;
+        showCallScreen();
         const res = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls', {
           method: 'POST',
           headers: authHeaders(),
@@ -707,12 +679,14 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
         });
         const data = await res.json();
         if (data.callId) {
-          await startWebRTC(data.callId);
+          await startAudioPipeline(data.callId);
         } else {
           alert('Call error: ' + (data.error || 'Failed to start call'));
+          cleanupCall();
         }
       } catch (err) {
         alert('Error initiating call: ' + err.message);
+        cleanupCall();
       }
     });
 
@@ -730,17 +704,20 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       if (!state.incomingCallId) return;
       document.getElementById('incomingModal').style.display = 'none';
       try {
+        const caller = document.getElementById('incomingCallerNumber').innerText;
+        document.getElementById('activePeer').innerText = caller;
+        showCallScreen();
         const res = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(state.incomingCallId) + '/accept', {
           method: 'POST',
           headers: authHeaders()
         });
         const data = await res.json();
         if (data.callId) {
-          document.getElementById('activePeer').innerText = document.getElementById('incomingCallerNumber').innerText;
-          await startWebRTC(data.callId);
+          await startAudioPipeline(data.callId);
         }
       } catch (err) {
         alert('Failed to accept incoming call: ' + err.message);
+        cleanupCall();
       }
     });
 

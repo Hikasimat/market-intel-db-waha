@@ -8,7 +8,7 @@ import (
 
 type activeCall struct {
 	cm     *call.CallManager
-	bridge *Bridge
+	bridge AudioBridge
 }
 
 type callRegistry struct {
@@ -50,7 +50,7 @@ func (r *callRegistry) count() int {
 	return len(r.calls)
 }
 
-func (r *callRegistry) setBridge(callID string, b *Bridge) (*Bridge, bool) {
+func (r *callRegistry) setBridge(callID string, b AudioBridge) (AudioBridge, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ac, ok := r.calls[callID]

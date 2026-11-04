@@ -198,13 +198,15 @@ func (s *Session) info() SessionInfo {
 	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired}
 }
 
-func (s *Session) setBridge(callID string, b *Bridge) {
+func (s *Session) setBridge(callID string, b AudioBridge) {
 	oldB, found := s.reg.setBridge(callID, b)
 	if !found {
-		b.Close()
+		if b != nil {
+			b.Close()
+		}
 		return
 	}
-	if oldB != nil {
+	if oldB != nil && oldB != b {
 		oldB.Close()
 	}
 }

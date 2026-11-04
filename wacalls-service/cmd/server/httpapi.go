@@ -9,6 +9,7 @@ import (
 
 	"wacalls/internal/voip/core"
 
+	"github.com/coder/websocket"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -24,6 +25,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/bridge/sessions/{sid}/events", s.handleBridgeEvent)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls", s.handleStartCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
+	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/socket", s.handleCallSocket)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
@@ -162,6 +164,12 @@ func (s *server) handleWebRTC(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *server) handleCallSocket(w http.ResponseWriter, r *http.Request) {
+	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
+		s.doCallSocket(sess, w, r)
+	}
+}
+
 func (s *server) handleAccept(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
 		s.doAccept(sess, w, r)
@@ -251,6 +259,36 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 	}
 	sess.setBridge(callID, bridge)
 	writeJSON(w, http.StatusOK, map[string]string{"sdp_answer": answer})
+}
+
+func (s *server) doCallSocket(sess *Session, w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ac, ok := sess.reg.get(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+		OriginPatterns:     []string{"*"},
+	})
+	if err != nil {
+		s.log.Error("audio websocket accept error", "err", err)
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	wsBridge := NewWSBridge(conn, s.log)
+	wsBridge.OnBrowserPCM = func(pcm []float32) {
+		ac.cm.FeedCapturedPCM(pcm)
+	}
+	sess.setBridge(id, wsBridge)
+	defer sess.setBridge(id, nil)
+
+	s.log.Info("audio websocket connected", "session", sess.id, "call_id", id)
+	wsBridge.Run(r.Context())
+	s.log.Info("audio websocket disconnected", "session", sess.id, "call_id", id)
 }
 
 func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request) {
