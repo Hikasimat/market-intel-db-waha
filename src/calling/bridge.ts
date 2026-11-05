@@ -9,8 +9,25 @@ import { createChildLogger } from '../logger.js';
 
 const logger = createChildLogger('CallingBridge');
 
-/** Call stanza children the Go engine reacts to (everything else is ignored). */
-const FORWARDED_CALL_TAGS = new Set(['offer', 'accept', 'transport', 'terminate', 'reject']);
+/**
+ * Call stanza children the Go engine reacts to.
+ *
+ * IMPORTANT: 'preaccept' MUST be included.
+ *   - After an outgoing offer is sent, the WhatsApp server forwards a <preaccept>
+ *     from the recipient's device that confirms the recipient's phone is ringing.
+ *   - Without forwarding it, the Go engine never learns the remote device is ringing
+ *     and cannot advance beyond OFFER_SENT state.
+ */
+const FORWARDED_CALL_TAGS = new Set([
+  'offer',
+  'preaccept',
+  'accept',
+  'transport',
+  'terminate',
+  'reject',
+  'relaylatency',
+  'mute_v2',
+]);
 
 type JsonNode = {
   tag: string;
@@ -87,9 +104,15 @@ export class CallingBridge {
       this.sockets.set(wahaSession, sock);
 
       // Forward raw call stanzas without interfering with Baileys' own 'call' handling.
+      // Also forward <ack class="call"> nodes (server ACK for outgoing offers that carry
+      // relay endpoints) and <receipt> nodes that contain a call <accept> child.
       if (!this.listening.has(sock)) {
         this.listening.add(sock);
         (sock.ws as any).on('CB:call', (node: BinaryNode) => this.forwardCallNode(wahaSession, node));
+        // Server ACK for call offer — carries relay/SSRC data the engine needs.
+        (sock.ws as any).on('CB:ack,,call', (node: BinaryNode) => this.forwardCallAck(wahaSession, node));
+        // Receipt events that confirm call acceptance from a linked device or the recipient.
+        (sock.ws as any).on('CB:receipt', (node: BinaryNode) => this.forwardReceiptNode(wahaSession, node));
       }
 
       // The engine may still be starting; retry registration for a short while.
@@ -171,6 +194,11 @@ export class CallingBridge {
       const from = node.attrs?.from;
       if (!from) return;
 
+      logger.debug(
+        `[CALL][${wahaSession}] Forwarding call stanza type=${child.tag} from=${from} ` +
+          `call-id=${child.attrs?.['call-id'] || ''} stanza-id=${node.attrs?.id || ''}`
+      );
+
       fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/events`, {
         method: 'POST',
         headers: internalHeaders(),
@@ -184,6 +212,98 @@ export class CallingBridge {
       }).catch((err) => logger.warn(`[${wahaSession}] Failed to forward call stanza '${child.tag}': ${err.message}`));
     } catch (err: any) {
       logger.warn(`[${wahaSession}] Error forwarding call stanza: ${err.message}`);
+    }
+  }
+
+  /**
+   * Forwards <ack class="call" type="offer"> nodes from the WhatsApp server.
+   * These carry relay endpoint data needed to establish the media path.
+   *
+   * The WhatsApp server responds to an outgoing call offer with an ACK that
+   * contains a <relay> subtree with te2/key/token/auth_token children and
+   * a participant list (JIDs for SRTP derivation). Without forwarding this,
+   * the Go engine has no relay endpoints and cannot connect media.
+   *
+   * The node structure:
+   *   <ack id="<stanza-id>" class="call" type="offer">
+   *     <relay uuid="..." self_pid="..." peer_pid="...">
+   *       <key>...</key>
+   *       <token id="0">...</token>
+   *       <auth_token id="0">...</auth_token>
+   *       <te2 relay_id="..." token_id="0" auth_token_id="0" relay_name="..." protocol="0">
+   *         <6-byte IPv4+port>
+   *       </te2>
+   *       ...
+   *       <participant jid="..."/>
+   *     </relay>
+   *   </ack>
+   */
+  private forwardCallAck(wahaSession: string, node: BinaryNode): void {
+    try {
+      const sid = this.callingSessionIds.get(wahaSession);
+      if (!sid) return;
+      const cls = node.attrs?.class;
+      const typ = node.attrs?.type;
+      if (cls !== 'call') return; // only forward call-class ACKs
+      const stanzaId = node.attrs?.id || '';
+
+      logger.info(
+        `[CALL][${wahaSession}] Forwarding call ACK class=${cls} type=${typ} stanza-id=${stanzaId}`
+      );
+
+      fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/ack`, {
+        method: 'POST',
+        headers: internalHeaders(),
+        body: JSON.stringify({
+          type: typ || '',
+          id: stanzaId,
+          from: node.attrs?.from || '',
+          data: nodeToJson(node),
+        }),
+        signal: AbortSignal.timeout(8000),
+      }).catch((err) =>
+        logger.warn(`[${wahaSession}] Failed to forward call ACK type=${typ}: ${err.message}`)
+      );
+    } catch (err: any) {
+      logger.warn(`[${wahaSession}] Error forwarding call ACK: ${err.message}`);
+    }
+  }
+
+  /**
+   * Forwards <receipt> nodes that contain a call <accept> or other call-related child.
+   * WhatsApp uses receipt stanzas to signal that a linked device accepted a call
+   * (e.g. the same account answered on another phone).
+   */
+  private forwardReceiptNode(wahaSession: string, node: BinaryNode): void {
+    try {
+      const sid = this.callingSessionIds.get(wahaSession);
+      if (!sid) return;
+      const children = Array.isArray(node.content) ? (node.content as BinaryNode[]) : [];
+      // Only forward receipts that have a call-id attribute (call-related receipts)
+      const callChild = children.find(
+        (c) => c.attrs?.['call-id'] !== undefined || ['accept', 'terminate', 'reject'].includes(c.tag)
+      );
+      if (!callChild) return;
+      const from = node.attrs?.from || node.attrs?.to || '';
+      const stanzaId = node.attrs?.id || '';
+      logger.debug(
+        `[CALL][${wahaSession}] Forwarding receipt child=${callChild.tag} from=${from} stanza-id=${stanzaId}`
+      );
+      fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/events`, {
+        method: 'POST',
+        headers: internalHeaders(),
+        body: JSON.stringify({
+          type: `receipt:${callChild.tag}`,
+          from,
+          id: stanzaId,
+          data: nodeToJson(node),
+        }),
+        signal: AbortSignal.timeout(8000),
+      }).catch((err) =>
+        logger.warn(`[${wahaSession}] Failed to forward receipt/${callChild.tag}: ${err.message}`)
+      );
+    } catch (err: any) {
+      logger.warn(`[${wahaSession}] Error forwarding receipt node: ${err.message}`);
     }
   }
 

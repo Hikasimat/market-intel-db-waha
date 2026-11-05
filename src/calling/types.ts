@@ -24,7 +24,7 @@ export type WaCallsSSEEvent =
   | { type: 'session-list'; sessions: WaCallsSession[] }
   | { type: 'incoming'; sessionId: string; id: string; peer: string; offeredAt: number }
   | { type: 'incoming-claimed'; sessionId: string; id: string; owner: string }
-  | { type: 'call-status'; sessionId: string; id: string; owner?: string | null; status: 'starting' | 'ringing' | 'connected' | 'ended'; peer: string; startedAt: number }
+  | { type: 'call-status'; sessionId: string; id: string; owner?: string | null; direction?: 'inbound' | 'outbound'; status: 'starting' | 'ringing' | 'connected' | 'ended'; peer: string; startedAt: number }
   | { type: 'call-ended'; sessionId: string; id: string; owner?: string | null; reason?: string; endedAt: number }
   | { type: 'call-list'; calls: WaCallsCallRecord[] };
 

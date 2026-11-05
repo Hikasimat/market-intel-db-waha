@@ -77,3 +77,4 @@ func (b *WSBridge) Run(ctx context.Context) {
 	}
 	b.Close()
 }
+

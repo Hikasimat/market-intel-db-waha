@@ -72,3 +72,14 @@ func (r *callRegistry) drain() []*activeCall {
 	r.calls = map[string]*activeCall{}
 	return out
 }
+
+// snapshot returns all active calls without removing them (used for broadcasting ACKs).
+func (r *callRegistry) snapshot() []*activeCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*activeCall, 0, len(r.calls))
+	for _, ac := range r.calls {
+		out = append(out, ac)
+	}
+	return out
+}

@@ -23,6 +23,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/bridge/sessions", s.handleBridgeRegister)
 	mux.HandleFunc("DELETE /api/bridge/sessions/{name}", s.handleBridgeDisconnect)
 	mux.HandleFunc("POST /api/bridge/sessions/{sid}/events", s.handleBridgeEvent)
+	mux.HandleFunc("POST /api/bridge/sessions/{sid}/ack", s.handleBridgeAck)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls", s.handleStartCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/webrtc", s.handleWebRTC)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/socket", s.handleCallSocket)
@@ -126,6 +127,36 @@ func (s *server) handleBridgeDisconnect(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleBridgeAck receives <ack class="call"> nodes forwarded by the Baileys socket.
+// These are the server's acknowledgement of an outgoing call offer and carry the
+// relay endpoint data (te2 nodes) needed to establish the media path.
+func (s *server) handleBridgeAck(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var body struct {
+		Type string   `json:"type"`
+		From string   `json:"from"`
+		ID   string   `json:"id"`
+		Data jsonNode `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	tdata := decodeNode(body.Data)
+	w.WriteHeader(http.StatusNoContent)
+	// Dispatch to all active calls: the ack carries the stanza id that matches
+	// the outgoing offer — the CallManager correlates by stanza id internally.
+	go func() {
+		calls := sess.reg.snapshot()
+		for _, ac := range calls {
+			ac.cm.HandleCallAck(r.Context(), &tdata)
+		}
+	}()
+}
+
 // handleBridgeEvent receives raw call stanzas forwarded by the Baileys socket.
 func (s *server) handleBridgeEvent(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
@@ -226,7 +257,7 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 	}
 	s.broker.upsertCall(CallRecord{
 		SessionID: sess.id, CallID: callID, Owner: &owner, Direction: "outbound", Peer: peer.String(),
-		StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
+		StartedAt: time.Now().UnixMilli(), Status: StatusStarting,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": callID}})
 }

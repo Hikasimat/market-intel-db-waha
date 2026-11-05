@@ -191,7 +191,7 @@ export class WaCallsEventConsumer extends EventEmitter {
               callId: event.id,
               sessionId: event.sessionId,
               peer: event.peer,
-              direction: event.owner ? 'outbound' : 'inbound',
+              direction: event.direction || (event.owner ? 'outbound' : 'inbound'),
               status: 'ringing',
               startedAt: event.startedAt || Date.now(),
             };
@@ -202,7 +202,7 @@ export class WaCallsEventConsumer extends EventEmitter {
               callId: event.id,
               sessionId: event.sessionId,
               peer: event.peer,
-              direction: event.owner ? 'outbound' : 'inbound',
+              direction: event.direction || (event.owner ? 'outbound' : 'inbound'),
               status: 'active',
               startedAt: event.startedAt || Date.now(),
             };

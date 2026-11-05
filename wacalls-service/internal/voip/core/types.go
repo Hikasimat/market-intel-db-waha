@@ -3,13 +3,24 @@ package core
 type CallState string
 
 const (
-	CallStateInitiating      CallState = "initiating"
-	CallStateRinging         CallState = "ringing"
-	CallStateIncomingRinging CallState = "incoming_ringing"
-	CallStateConnecting      CallState = "connecting"
-	CallStateActive          CallState = "active"
-	CallStateOnHold          CallState = "on_hold"
-	CallStateEnded           CallState = "ended"
+	CallStateInitiating         CallState = "initiating"
+	CallStateOfferSent          CallState = "offer_sent"
+	CallStateServerAcknowledged CallState = "server_acknowledged"
+	CallStateRemoteRinging      CallState = "remote_ringing"
+	CallStateIncomingRinging    CallState = "incoming_ringing"
+	CallStateRemoteAccepted     CallState = "remote_accepted"
+	CallStateMediaConnecting    CallState = "media_connecting"
+	CallStateActive             CallState = "active"
+	CallStateOnHold             CallState = "on_hold"
+	CallStateRejected           CallState = "rejected"
+	CallStateBusy               CallState = "busy"
+	CallStateTimeout            CallState = "timeout"
+	CallStateFailed             CallState = "failed"
+	CallStateEnded              CallState = "ended"
+
+	// Legacy aliases for backward compatibility
+	CallStateRinging    = CallStateRemoteRinging
+	CallStateConnecting = CallStateMediaConnecting
 )
 
 type CallDirection string
@@ -35,6 +46,7 @@ const (
 	EndCallReasonBusy         EndCallReason = "busy"
 	EndCallReasonCancelled    EndCallReason = "cancelled"
 	EndCallReasonFailed       EndCallReason = "failed"
+	EndCallReasonError        EndCallReason = "error"
 	EndCallReasonDoNotDisturb EndCallReason = "do_not_disturb"
 	EndCallReasonUnknown      EndCallReason = "unknown"
 )

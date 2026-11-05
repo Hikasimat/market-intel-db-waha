@@ -33,11 +33,17 @@ type CallManager struct {
 	firstPacketSent       bool
 	initialTransportSent  bool
 	outgoingPreacceptSent bool
+	relayPreConnected     bool
 	acceptedByJid         string
 	debeEnabled           bool
 
 	encodeBuf    []float32
 	encodeBufPos int
+	preBuffer    []float32
+
+	inAudioPackets  uint64
+	outAudioPackets uint64
+	bidiLogged      bool
 
 	lastCaptureAt time.Time
 	keepaliveStop chan struct{}
@@ -76,6 +82,15 @@ func (m *CallManager) emitState() {
 	}
 }
 
+func (m *CallManager) safeCallID() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.currentCall != nil {
+		return m.currentCall.CallID
+	}
+	return "unknown"
+}
+
 func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid types.JID, isVideo bool) error {
 	m.mu.Lock()
 	if m.currentCall != nil && !m.currentCall.IsEnded() {
@@ -99,6 +114,10 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	m.currentCall = call
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
+	m.inAudioPackets = 0
+	m.outAudioPackets = 0
+	m.bidiLogged = false
+	m.preBuffer = nil
 
 	selfJid := creator.String()
 	m.selfSsrc = media.GenerateSecureSsrc(callID, selfJid, 0)
@@ -107,14 +126,32 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	m.initCodec()
 	m.mu.Unlock()
 
+	m.log.Info("[CALL] Outgoing call requested", "call_id", callID, "peer", resolved.String(), "video", isVideo)
+	m.log.Info("[CALL] Recipient JID resolved", "raw", peerJid.String(), "resolved", resolved.String())
+
 	offer, err := signaling.BuildOfferStanza(ctx, m.sock, callID, callKey, resolved, isVideo)
 	if err != nil {
+		m.mu.Lock()
+		_ = m.currentCall.ApplyTransition(Transition{Type: TransitionTerminated, Reason: core.EndCallReasonFailed})
+		m.emitState()
+		m.mu.Unlock()
+		m.log.Error("[CALL] Call offer construction failed", "call_id", callID, "err", err)
 		return err
 	}
+	stanzaID := wanode.AttrString(offer.Attrs, "id")
+	m.log.Info("[CALL] Call offer constructed", "call_id", callID, "stanza_id", stanzaID)
+
 	ackNode, err := m.sock.Query(ctx, offer)
 	if err != nil {
+		m.mu.Lock()
+		_ = m.currentCall.ApplyTransition(Transition{Type: TransitionTerminated, Reason: core.EndCallReasonFailed})
+		m.emitState()
+		m.mu.Unlock()
+		m.log.Error("[CALL] Offer transmission failed", "call_id", callID, "stanza_id", stanzaID, "err", err)
 		return err
 	}
+
+	m.log.Info("[CALL] Offer transmitted", "call_id", callID, "stanza_id", stanzaID)
 
 	m.mu.Lock()
 	_ = m.currentCall.ApplyTransition(Transition{Type: TransitionOfferSent})
@@ -125,7 +162,6 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 		go m.HandleCallAck(context.Background(), ackNode)
 	}
 
-	m.log.Info("call offer sent", "call_id", callID, "peer", resolved.String())
 	return nil
 }
 

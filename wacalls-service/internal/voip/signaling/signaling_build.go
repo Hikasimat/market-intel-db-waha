@@ -25,6 +25,9 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	if err != nil {
 		return waBinary.Node{}, fmt.Errorf("usync devices: %w", err)
 	}
+	if len(rawDevices) == 0 {
+		rawDevices = []types.JID{peerJid}
+	}
 	if err := sock.AssertSessions(ctx, rawDevices, false); err != nil {
 		return waBinary.Node{}, fmt.Errorf("assert sessions: %w", err)
 	}
@@ -32,6 +35,9 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	destinations, includeDeviceIdentity, err := sock.CreateParticipantNodes(ctx, rawDevices, callKey, waBinary.Attrs{"count": "0"})
 	if err != nil {
 		return waBinary.Node{}, fmt.Errorf("participant nodes: %w", err)
+	}
+	if len(destinations) == 0 {
+		return waBinary.Node{}, fmt.Errorf("no participant encryption nodes produced for %s", peerJid.String())
 	}
 
 	var offerContent []waBinary.Node

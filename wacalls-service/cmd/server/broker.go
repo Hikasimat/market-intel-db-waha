@@ -116,7 +116,7 @@ func (b *Broker) upsertCall(r CallRecord) {
 	b.broadcastCallList()
 	b.broadcast(map[string]any{
 		"type": "call-status", "sessionId": r.SessionID, "id": r.CallID, "owner": r.Owner,
-		"status": r.Status, "peer": r.Peer, "startedAt": r.StartedAt,
+		"status": r.Status, "peer": r.Peer, "startedAt": r.StartedAt, "direction": r.Direction,
 	})
 }
 
