@@ -80,11 +80,7 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	m.initCodec()
 	m.mu.Unlock()
 
-	ownDev := m.sock.OwnLID()
-	if ownDev.IsEmpty() {
-		ownDev = m.sock.OwnPN()
-	}
-	preaccept := signaling.BuildPreacceptStanza(peerJid, callID, wanode.MustJID(creator), ownDev)
+	preaccept := signaling.BuildPreacceptStanza(peerJid, callID, wanode.MustJID(creator))
 	if err := m.sock.SendNode(ctx, preaccept); err != nil {
 		m.log.Error("send preaccept", "err", err)
 	}
@@ -324,8 +320,21 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 			m.initSrtpKeysLocked()
 		}
 	}
+	isInitiator := call.IsInitiator()
+	peer := wanode.MustJID(call.PeerJid)
+	callID := call.CallID
+	creator := wanode.MustJID(call.CallCreator)
+	sendPreaccept := isInitiator && !m.outgoingPreacceptSent
+	if sendPreaccept {
+		m.outgoingPreacceptSent = true
+	}
 	endpoints := parsed.Relays
 	m.mu.Unlock()
+
+	if sendPreaccept {
+		_ = m.sock.SendNode(ctx, signaling.BuildPreacceptStanza(peer, callID, creator))
+		m.log.Info("[CALL] Outgoing preaccept transmitted after server ACK", "call_id", callID, "peer", peer.String())
+	}
 
 	m.connectRelays(endpoints)
 }

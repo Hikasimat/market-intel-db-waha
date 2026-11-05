@@ -326,7 +326,10 @@ export class CallingBridge {
     switch (method) {
       case 'sendNode': {
         const node = jsonToNode(params.node);
-        if (node.tag === 'call' && !node.attrs?.from) {
+        const childTag = Array.isArray(node.content) ? (node.content[0] as any)?.tag : '';
+        // Only set 'from' on <call> when answering an incoming call (<accept>) on this linked companion device.
+        // Outbound offers and signaling must NOT have 'from' stamped.
+        if (node.tag === 'call' && !node.attrs?.from && childTag === 'accept') {
           const to = String(node.attrs?.to || '');
           const isLid = to.endsWith('@lid');
           const meLid = (sock.authState.creds.me as any)?.lid;
@@ -339,7 +342,9 @@ export class CallingBridge {
       }
       case 'query': {
         const node = jsonToNode(params.node);
-        if (node.tag === 'call' && !node.attrs?.from) {
+        const childTag = Array.isArray(node.content) ? (node.content[0] as any)?.tag : '';
+        // Only set 'from' on <call> when answering an incoming call (<accept>)
+        if (node.tag === 'call' && !node.attrs?.from && childTag === 'accept') {
           const to = String(node.attrs?.to || '');
           const isLid = to.endsWith('@lid');
           const meLid = (sock.authState.creds.me as any)?.lid;

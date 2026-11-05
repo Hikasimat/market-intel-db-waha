@@ -73,9 +73,6 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 		"to": peerJid,
 		"id": GenerateCallStanzaID(),
 	}
-	if !creator.IsEmpty() {
-		callAttrs["from"] = creator
-	}
 
 	return waBinary.Node{
 		Tag:   "call",
@@ -170,14 +167,10 @@ func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) 
 	})
 }
 
-func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JID, ownDevice types.JID) waBinary.Node {
-	callAttrs := waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()}
-	if !ownDevice.IsEmpty() {
-		callAttrs["from"] = ownDevice
-	}
+func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
 	return waBinary.Node{
 		Tag:   "call",
-		Attrs: callAttrs,
+		Attrs: waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()},
 		Content: []waBinary.Node{{
 			Tag:   "preaccept",
 			Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator.ToNonAD()},
@@ -185,6 +178,7 @@ func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JI
 				{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 				{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
 				{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capabilityPreaccept},
+				{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 			},
 		}},
 	}
