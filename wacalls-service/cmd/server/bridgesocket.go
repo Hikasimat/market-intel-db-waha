@@ -291,6 +291,16 @@ func (s *bridgeSocket) DecryptCallKey(ctx context.Context, from types.JID, encCh
 }
 
 func (s *bridgeSocket) GetTCToken(ctx context.Context, jid types.JID) ([]byte, error) {
+	var res struct {
+		Token string `json:"token"`
+	}
+	target := jid.ToNonAD().String()
+	_ = s.rpc.call(ctx, s.name, "getTCToken", map[string]any{"jid": target}, &res)
+	if res.Token != "" {
+		if data, err := base64.StdEncoding.DecodeString(res.Token); err == nil && len(data) > 0 {
+			return data, nil
+		}
+	}
 	return nil, nil
 }
 

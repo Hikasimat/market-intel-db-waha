@@ -12,7 +12,7 @@ import (
 
 var (
 	capabilityOffer     = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
-	capabilityPreaccept = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
+	capabilityPreaccept = []byte{0x01, 0x05, 0xff, 0x09, 0xe4, 0xbb, 0x07}
 )
 
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, error) {
@@ -20,6 +20,7 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	if creator.IsEmpty() {
 		creator = sock.OwnPN()
 	}
+	creatorNonAD := creator.ToNonAD()
 
 	rawDevices, err := sock.GetUSyncDevices(ctx, []types.JID{peerJid})
 	if err != nil {
@@ -42,7 +43,7 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 
 	var offerContent []waBinary.Node
 
-	if token, err := sock.GetTCToken(ctx, peerJid); err == nil && len(token) > 0 {
+	if token, err := sock.GetTCToken(ctx, wanode.MustJID(wanode.CleanJID(peerJid.String()))); err == nil && len(token) > 0 {
 		offerContent = append(offerContent, waBinary.Node{Tag: "privacy", Content: token})
 	}
 
@@ -54,6 +55,7 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	}
 
 	offerContent = append(offerContent,
+		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "8000"}},
 		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 		waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capabilityOffer},
@@ -67,12 +69,20 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 		}
 	}
 
+	callAttrs := waBinary.Attrs{
+		"to": peerJid,
+		"id": GenerateCallStanzaID(),
+	}
+	if !creator.IsEmpty() {
+		callAttrs["from"] = creator
+	}
+
 	return waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()},
+		Attrs: callAttrs,
 		Content: []waBinary.Node{{
 			Tag:     "offer",
-			Attrs:   waBinary.Attrs{"call-id": callID, "call-creator": creator},
+			Attrs:   waBinary.Attrs{"call-id": callID, "call-creator": creatorNonAD},
 			Content: offerContent,
 		}},
 	}, nil
@@ -94,6 +104,7 @@ func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string,
 	}
 
 	acceptContent := []waBinary.Node{
+		{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "8000"}},
 		{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 		{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 		*encNode,
@@ -108,12 +119,22 @@ func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string,
 		acceptContent = append(acceptContent, waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{"enc": "vp8"}})
 	}
 
+	callAttrs := waBinary.Attrs{
+		"to": peerJid,
+		"id": GenerateCallStanzaID(),
+	}
+	if own := sock.OwnLID(); !own.IsEmpty() {
+		callAttrs["from"] = own
+	} else if own := sock.OwnPN(); !own.IsEmpty() {
+		callAttrs["from"] = own
+	}
+
 	return waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": wanode.MustJID(wanode.CleanJID(peerJid.String())), "id": GenerateCallStanzaID()},
+		Attrs: callAttrs,
 		Content: []waBinary.Node{{
 			Tag:     "accept",
-			Attrs:   waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
+			Attrs:   waBinary.Attrs{"call-id": callID, "call-creator": callCreator.ToNonAD(), "count": "0"},
 			Content: acceptContent,
 		}},
 	}, nil
@@ -149,13 +170,17 @@ func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) 
 	})
 }
 
-func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
+func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JID, ownDevice types.JID) waBinary.Node {
+	callAttrs := waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()}
+	if !ownDevice.IsEmpty() {
+		callAttrs["from"] = ownDevice
+	}
 	return waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()},
+		Attrs: callAttrs,
 		Content: []waBinary.Node{{
 			Tag:   "preaccept",
-			Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
+			Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator.ToNonAD()},
 			Content: []waBinary.Node{
 				{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 				{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},

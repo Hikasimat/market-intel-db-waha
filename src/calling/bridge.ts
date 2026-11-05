@@ -1,6 +1,7 @@
 import {
   encodeSignedDeviceIdentity,
   unpadRandomMax16,
+  getBinaryNodeChild,
   type BinaryNode,
   type WASocket,
 } from '@whiskeysockets/baileys';
@@ -110,7 +111,12 @@ export class CallingBridge {
         this.listening.add(sock);
         (sock.ws as any).on('CB:call', (node: BinaryNode) => this.forwardCallNode(wahaSession, node));
         // Server ACK for call offer — carries relay/SSRC data the engine needs.
-        (sock.ws as any).on('CB:ack,,call', (node: BinaryNode) => this.forwardCallAck(wahaSession, node));
+        (sock.ws as any).on('CB:ack,class:call', (node: BinaryNode) => this.forwardCallAck(wahaSession, node));
+        (sock.ws as any).on('CB:ack', (node: BinaryNode) => {
+          if (node.attrs?.class === 'call') {
+            this.forwardCallAck(wahaSession, node);
+          }
+        });
         // Receipt events that confirm call acceptance from a linked device or the recipient.
         (sock.ws as any).on('CB:receipt', (node: BinaryNode) => this.forwardReceiptNode(wahaSession, node));
       }
@@ -319,11 +325,29 @@ export class CallingBridge {
 
     switch (method) {
       case 'sendNode': {
-        await sock.sendNode(jsonToNode(params.node));
+        const node = jsonToNode(params.node);
+        if (node.tag === 'call' && !node.attrs?.from) {
+          const to = String(node.attrs?.to || '');
+          const isLid = to.endsWith('@lid');
+          const meLid = (sock.authState.creds.me as any)?.lid;
+          const meId = sock.authState.creds.me?.id;
+          node.attrs = node.attrs || {};
+          node.attrs.from = (isLid && meLid) ? meLid : meId;
+        }
+        await sock.sendNode(node);
         return {};
       }
       case 'query': {
-        const resp = await sock.query(jsonToNode(params.node));
+        const node = jsonToNode(params.node);
+        if (node.tag === 'call' && !node.attrs?.from) {
+          const to = String(node.attrs?.to || '');
+          const isLid = to.endsWith('@lid');
+          const meLid = (sock.authState.creds.me as any)?.lid;
+          const meId = sock.authState.creds.me?.id;
+          node.attrs = node.attrs || {};
+          node.attrs.from = (isLid && meLid) ? meLid : meId;
+        }
+        const resp = await sock.query(node);
         return { node: resp ? nodeToJson(resp) : null };
       }
       case 'getUSyncDevices': {
@@ -370,6 +394,25 @@ export class CallingBridge {
           return { lid: match?.lid || '' };
         } catch {
           return { lid: '' };
+        }
+      }
+      case 'getTCToken': {
+        const jid = params.jid;
+        if (!jid) return { token: '' };
+        try {
+          const res = await (sock as any).getPrivacyTokens([jid]);
+          const tokensNode = getBinaryNodeChild(res, 'tokens');
+          const tokenNode = getBinaryNodeChild(tokensNode, 'token');
+          const content = tokenNode?.content;
+          if (Buffer.isBuffer(content)) {
+            return { token: content.toString('base64') };
+          } else if (content instanceof Uint8Array) {
+            return { token: Buffer.from(content).toString('base64') };
+          }
+          return { token: '' };
+        } catch (err: any) {
+          logger.warn(`Failed to fetch TC token for ${jid}: ${err.message}`);
+          return { token: '' };
         }
       }
       default:

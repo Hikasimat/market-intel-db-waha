@@ -103,12 +103,11 @@ func (m *SessionManager) Upsert(reg BridgeRegistration) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid jid %q: %w", reg.JID, err)
 	}
-	// Call creator must be a non-AD user JID (no :device component)
-	ownPN = ownPN.ToNonAD()
+	// Keep the full device JID (with :device component) so SSRC, relay matching, and signaling identify our device
 	var ownLID types.JID
 	if reg.LID != "" {
 		if lid, err := types.ParseJID(reg.LID); err == nil {
-			ownLID = lid.ToNonAD()
+			ownLID = lid
 		}
 	}
 	sock := &bridgeSocket{

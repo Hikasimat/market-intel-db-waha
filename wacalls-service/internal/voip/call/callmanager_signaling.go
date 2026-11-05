@@ -80,7 +80,11 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	m.initCodec()
 	m.mu.Unlock()
 
-	preaccept := signaling.BuildPreacceptStanza(peerJid, callID, wanode.MustJID(creator))
+	ownDev := m.sock.OwnLID()
+	if ownDev.IsEmpty() {
+		ownDev = m.sock.OwnPN()
+	}
+	preaccept := signaling.BuildPreacceptStanza(peerJid, callID, wanode.MustJID(creator), ownDev)
 	if err := m.sock.SendNode(ctx, preaccept); err != nil {
 		m.log.Error("send preaccept", "err", err)
 	}
