@@ -127,7 +127,7 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	m.mu.Unlock()
 
 	m.log.Info("[CALL] Outgoing call requested", "call_id", callID, "peer", resolved.String(), "video", isVideo)
-	m.log.Info("[CALL] Recipient JID resolved", "raw", peerJid.String(), "resolved", resolved.String())
+	m.log.Info("[CALL] Recipient JID resolved", "raw", peerJid.String(), "target", resolved.String())
 
 	offer, err := signaling.BuildOfferStanza(ctx, m.sock, callID, callKey, resolved, isVideo)
 	if err != nil {

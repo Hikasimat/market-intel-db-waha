@@ -59,11 +59,21 @@ func EncodeCallKeyMessage(callKey []byte) ([]byte, error) {
 }
 
 func DecryptCallKeyInNode(ctx context.Context, sock core.VoipSocket, inner *waBinary.Node, peerJid types.JID) ([]byte, error) {
-	encNode := findEncNode(inner)
-	if encNode == nil {
+	encNodes := findEncNodes(inner, sock)
+	if len(encNodes) == 0 {
 		return nil, nil
 	}
-	return sock.DecryptCallKey(ctx, peerJid, encNode)
+	var lastErr error
+	for _, encNode := range encNodes {
+		key, err := sock.DecryptCallKey(ctx, peerJid, encNode)
+		if err == nil && len(key) == 32 {
+			return key, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+	return nil, lastErr
 }
 
 func DecodeCallKeyPlaintext(plaintext []byte) ([]byte, error) {

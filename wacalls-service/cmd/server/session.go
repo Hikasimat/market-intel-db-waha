@@ -167,14 +167,13 @@ func (s *Session) handleCallEvent(kind string, from types.JID, id string, data *
 	switch kind {
 	case "offer":
 		s.onIncomingOffer(ctx, from, id, data)
-	case "preaccept":
-		// preaccept from the remote peer means the recipient's device has received the
-		// offer and is showing the incoming call screen (ringing). Forward it to the
-		// active outgoing call so the state machine can advance to REMOTE_RINGING.
+	case "receipt:offer", "preaccept":
+		// Both preaccept and receipt:offer from the remote peer indicate that the
+		// recipient's device has received the offer and is showing the incoming call screen (ringing).
 		if ac, ok := s.callForEvent(from, id, data); ok {
 			ac.cm.HandleCallPreaccept(ctx, wrapCall(from, id, data), from)
 		}
-	case "accept":
+	case "receipt:accept", "accept":
 		if ac, ok := s.callForEvent(from, id, data); ok {
 			ac.cm.HandleCallAccept(ctx, wrapCall(from, id, data), from)
 		}
@@ -182,7 +181,7 @@ func (s *Session) handleCallEvent(kind string, from types.JID, id string, data *
 		if ac, ok := s.callForEvent(from, id, data); ok {
 			ac.cm.HandleCallTransport(ctx, wrapCall(from, id, data), from)
 		}
-	case "terminate", "reject":
+	case "receipt:terminate", "receipt:reject", "terminate", "reject":
 		if ac, ok := s.callForEvent(from, id, data); ok {
 			ac.cm.HandleCallTerminate(wrapCall(from, id, data))
 		}

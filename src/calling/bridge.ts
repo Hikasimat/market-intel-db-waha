@@ -279,15 +279,15 @@ export class CallingBridge {
       const sid = this.callingSessionIds.get(wahaSession);
       if (!sid) return;
       const children = Array.isArray(node.content) ? (node.content as BinaryNode[]) : [];
-      // Only forward receipts that have a call-id attribute (call-related receipts)
+      // Only forward receipts that have a call-id attribute or a known call child tag
       const callChild = children.find(
-        (c) => c.attrs?.['call-id'] !== undefined || ['accept', 'terminate', 'reject'].includes(c.tag)
+        (c) => c.attrs?.['call-id'] !== undefined || ['offer', 'accept', 'terminate', 'reject', 'preaccept'].includes(c.tag)
       );
       if (!callChild) return;
       const from = node.attrs?.from || node.attrs?.to || '';
       const stanzaId = node.attrs?.id || '';
-      logger.debug(
-        `[CALL][${wahaSession}] Forwarding receipt child=${callChild.tag} from=${from} stanza-id=${stanzaId}`
+      logger.info(
+        `[CALL][${wahaSession}] Forwarding receipt child=${callChild.tag} from=${from} stanza-id=${stanzaId} call-id=${callChild.attrs?.['call-id'] || ''}`
       );
       fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/events`, {
         method: 'POST',
@@ -296,7 +296,7 @@ export class CallingBridge {
           type: `receipt:${callChild.tag}`,
           from,
           id: stanzaId,
-          data: nodeToJson(node),
+          data: nodeToJson(callChild),
         }),
         signal: AbortSignal.timeout(8000),
       }).catch((err) =>

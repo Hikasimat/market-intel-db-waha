@@ -12,7 +12,7 @@ import (
 
 var (
 	capabilityOffer     = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
-	capabilityPreaccept = []byte{0x01, 0x05, 0xff, 0x09, 0xe4, 0xbb, 0x07}
+	capabilityPreaccept = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
 )
 
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, error) {
@@ -42,26 +42,25 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 
 	var offerContent []waBinary.Node
 
-	if token, err := sock.GetTCToken(ctx, wanode.MustJID(wanode.CleanJID(peerJid.String()))); err == nil && len(token) > 0 {
+	if token, err := sock.GetTCToken(ctx, peerJid); err == nil && len(token) > 0 {
 		offerContent = append(offerContent, waBinary.Node{Tag: "privacy", Content: token})
 	}
 
-	offerContent = append(offerContent,
-		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "8000"}},
-		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
-	)
 	if isVideo {
 		offerContent = append(offerContent, waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
 			"enc": "vp8", "dec": "vp8", "orientation": "0",
 			"screen_width": "1920", "screen_height": "1080", "device_orientation": "0",
 		}})
 	}
+
 	offerContent = append(offerContent,
+		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 		waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capabilityOffer},
 		waBinary.Node{Tag: "destination", Content: destinations},
 		waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
 	)
+
 	if includeDeviceIdentity {
 		if di, ok := sock.AccountDeviceIdentityNode(); ok {
 			offerContent = append(offerContent, di)
@@ -207,7 +206,7 @@ func BuildRelayLatencyStanza(peerJid types.JID, callID string, callCreator types
 		content = append(content, waBinary.Node{Tag: "destination", Content: dst})
 	}
 
-	return callWrap(wanode.MustJID(wanode.CleanJID(peerJid.String())), waBinary.Node{
+	return callWrap(peerJid, waBinary.Node{
 		Tag:     "relaylatency",
 		Attrs:   waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
 		Content: content,
@@ -215,7 +214,7 @@ func BuildRelayLatencyStanza(peerJid types.JID, callID string, callCreator types
 }
 
 func BuildTransportStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
-	return callWrap(wanode.MustJID(wanode.CleanJID(peerJid.String())), waBinary.Node{
+	return callWrap(peerJid, waBinary.Node{
 		Tag: "transport",
 		Attrs: waBinary.Attrs{
 			"call-id": callID, "call-creator": callCreator,

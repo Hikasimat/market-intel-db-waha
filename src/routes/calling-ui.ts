@@ -489,8 +489,59 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
       const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       state.audioCtx = ctx;
 
-      await ctx.audioWorklet.addModule('/worklets/capture-processor.js');
-      await ctx.audioWorklet.addModule('/worklets/playback-processor.js');
+      const captureCode = \`class CaptureProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel && channel.length) {
+      this.port.postMessage(channel.slice(0));
+    }
+    return true;
+  }
+}
+registerProcessor("capture-processor", CaptureProcessor);\`;
+
+      const playbackCode = \`const RING_SIZE = 16000 * 2;
+class PlaybackProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.ring = new Float32Array(RING_SIZE);
+    this.read = 0;
+    this.write = 0;
+    this.available = 0;
+    this.port.onmessage = (e) => {
+      const data = e.data;
+      for (let i = 0; i < data.length; i += 1) {
+        this.ring[this.write] = data[i];
+        this.write = (this.write + 1) % RING_SIZE;
+        if (this.available < RING_SIZE) {
+          this.available += 1;
+        } else {
+          this.read = (this.read + 1) % RING_SIZE;
+        }
+      }
+    };
+  }
+  process(_inputs, outputs) {
+    const out = outputs[0][0];
+    if (!out) return true;
+    for (let i = 0; i < out.length; i += 1) {
+      if (this.available > 0) {
+        out[i] = this.ring[this.read];
+        this.read = (this.read + 1) % RING_SIZE;
+        this.available -= 1;
+      } else {
+        out[i] = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("playback-processor", PlaybackProcessor);\`;
+
+      const captureBlob = new Blob([captureCode], { type: 'application/javascript' });
+      const playbackBlob = new Blob([playbackCode], { type: 'application/javascript' });
+      await ctx.audioWorklet.addModule(URL.createObjectURL(captureBlob));
+      await ctx.audioWorklet.addModule(URL.createObjectURL(playbackBlob));
       await ctx.resume();
 
       // 3. Connect resilient WebSocket audio stream
@@ -707,12 +758,14 @@ callingUIRouter.get('/calls', dashboardBasicAuth, (req: Request, res: Response) 
         const caller = document.getElementById('incomingCallerNumber').innerText;
         document.getElementById('activePeer').innerText = caller;
         showCallScreen();
-        const res = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(state.incomingCallId) + '/accept', {
+        const incomingId = state.incomingCallId;
+        const res = await fetch('/api/calling/sessions/' + encodeURIComponent(state.session) + '/calls/' + encodeURIComponent(incomingId) + '/accept', {
           method: 'POST',
           headers: authHeaders()
         });
         const data = await res.json();
         if (data.callId) {
+          state.currentCallId = data.callId;
           await startAudioPipeline(data.callId);
         }
       } catch (err) {

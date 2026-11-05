@@ -1,6 +1,7 @@
 package signaling
 
 import (
+	"strings"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/wanode"
 
@@ -82,13 +83,29 @@ func ExtractRelayEndpoints(node *waBinary.Node) []core.RelayEndpoint {
 	return relays
 }
 
-func findEncNode(inner *waBinary.Node) *waBinary.Node {
+func findEncNodes(inner *waBinary.Node, sock core.VoipSocket) []*waBinary.Node {
+	var prioritized []*waBinary.Node
+	var others []*waBinary.Node
+
 	for _, c := range wanode.NodeChildren(inner) {
 		c := c
 		if c.Tag == "enc" && wanode.HasAttr(c.Attrs, "type") {
-			return &c
+			prioritized = append(prioritized, &c)
 		}
 	}
+
+	var ourLid, ourLidBase, ourPn, ourPnBase string
+	if sock != nil {
+		if l := sock.OwnLID(); !l.IsEmpty() {
+			ourLid = l.String()
+			ourLidBase = l.ToNonAD().String()
+		}
+		if p := sock.OwnPN(); !p.IsEmpty() {
+			ourPn = p.String()
+			ourPnBase = p.ToNonAD().String()
+		}
+	}
+
 	for _, c := range wanode.NodeChildren(inner) {
 		if c.Tag != "destination" {
 			continue
@@ -97,13 +114,34 @@ func findEncNode(inner *waBinary.Node) *waBinary.Node {
 			if toNode.Tag != "to" {
 				continue
 			}
+			toJid := wanode.AttrString(toNode.Attrs, "jid")
 			for _, e := range wanode.NodeChildren(&toNode) {
 				e := e
 				if e.Tag == "enc" && wanode.HasAttr(e.Attrs, "type") {
-					return &e
+					isOurDevice := false
+					if ourLid != "" && (toJid == ourLid || (ourLidBase != "" && strings.HasPrefix(toJid, ourLidBase))) {
+						isOurDevice = true
+					}
+					if ourPn != "" && (toJid == ourPn || (ourPnBase != "" && strings.HasPrefix(toJid, ourPnBase))) {
+						isOurDevice = true
+					}
+					if isOurDevice {
+						prioritized = append(prioritized, &e)
+					} else {
+						others = append(others, &e)
+					}
 				}
 			}
 		}
+	}
+
+	return append(prioritized, others...)
+}
+
+func findEncNode(inner *waBinary.Node) *waBinary.Node {
+	nodes := findEncNodes(inner, nil)
+	if len(nodes) > 0 {
+		return nodes[0]
 	}
 	return nil
 }
