@@ -540,8 +540,17 @@ registerProcessor("playback-processor", PlaybackProcessor);\`;
 
       const captureBlob = new Blob([captureCode], { type: 'application/javascript' });
       const playbackBlob = new Blob([playbackCode], { type: 'application/javascript' });
-      await ctx.audioWorklet.addModule(URL.createObjectURL(captureBlob));
-      await ctx.audioWorklet.addModule(URL.createObjectURL(playbackBlob));
+      const capUrl = URL.createObjectURL(captureBlob);
+      const playUrl = URL.createObjectURL(playbackBlob);
+      try {
+        await ctx.audioWorklet.addModule(capUrl);
+        await ctx.audioWorklet.addModule(playUrl);
+      } finally {
+        setTimeout(() => {
+          try { URL.revokeObjectURL(capUrl); } catch {}
+          try { URL.revokeObjectURL(playUrl); } catch {}
+        }, 10000);
+      }
       await ctx.resume();
 
       // 3. Connect resilient WebSocket audio stream
@@ -656,42 +665,54 @@ registerProcessor("playback-processor", PlaybackProcessor);\`;
 
       es.addEventListener('call-ringing', (e) => {
         console.log('[SSE] Call ringing:', e.data);
-        const pill = document.getElementById('activeCallStatus');
-        if (pill) {
-          pill.className = 'status-pill pill-amber';
-          pill.innerText = 'RINGING...';
-        }
+        try {
+          const d = JSON.parse(e.data);
+          const eventCallId = d.callId || d.id;
+          if (state.currentCallId && eventCallId && eventCallId !== state.currentCallId) return;
+          const pill = document.getElementById('activeCallStatus');
+          if (pill) {
+            pill.className = 'status-pill pill-amber';
+            pill.innerText = 'RINGING...';
+          }
+        } catch {}
       });
 
       es.addEventListener('call-active', (e) => {
         console.log('[SSE] Call active:', e.data);
-        const pill = document.getElementById('activeCallStatus');
-        if (pill) {
-          pill.className = 'status-pill pill-green';
-          pill.innerText = 'ACTIVE CALL';
-        }
-        startTimer();
+        try {
+          const d = JSON.parse(e.data);
+          const eventCallId = d.callId || d.id;
+          if (state.currentCallId && eventCallId && eventCallId !== state.currentCallId) return;
+          const pill = document.getElementById('activeCallStatus');
+          if (pill) {
+            pill.className = 'status-pill pill-green';
+            pill.innerText = 'ACTIVE CALL';
+          }
+          startTimer();
+        } catch {}
       });
 
       es.addEventListener('call-ended', (e) => {
         console.log('[SSE] Call ended:', e.data);
-        const pill = document.getElementById('activeCallStatus');
-        if (pill) {
-          pill.className = 'status-pill pill-red';
-          let reason = '';
-          try {
-            const d = JSON.parse(e.data);
+        try {
+          const d = JSON.parse(e.data);
+          const eventCallId = d.callId || d.id;
+          if (state.currentCallId && eventCallId && eventCallId !== state.currentCallId) return;
+          const pill = document.getElementById('activeCallStatus');
+          if (pill) {
+            pill.className = 'status-pill pill-red';
+            let reason = '';
             if (d.endReason || d.reason) reason = ' (' + (d.endReason || d.reason) + ')';
-          } catch {}
-          pill.innerText = 'CALL ENDED' + reason;
-        }
-        if (state.timerInterval) {
-          clearInterval(state.timerInterval);
-          state.timerInterval = null;
-        }
-        setTimeout(() => {
-          cleanupCall();
-        }, 2200);
+            pill.innerText = 'CALL ENDED' + reason;
+          }
+          if (state.timerInterval) {
+            clearInterval(state.timerInterval);
+            state.timerInterval = null;
+          }
+          setTimeout(() => {
+            cleanupCall();
+          }, 2200);
+        } catch {}
       });
 
       es.addEventListener('incoming', (e) => {
@@ -730,6 +751,7 @@ registerProcessor("playback-processor", PlaybackProcessor);\`;
         });
         const data = await res.json();
         if (data.callId) {
+          state.currentCallId = data.callId;
           await startAudioPipeline(data.callId);
         } else {
           alert('Call error: ' + (data.error || 'Failed to start call'));

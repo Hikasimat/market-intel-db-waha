@@ -175,10 +175,12 @@ func (b *Broker) endCall(id, reason string) {
 	b.history = append(b.history, ended)
 	owner := c.Owner
 	sessionID := c.SessionID
+	dir := c.Direction
+	peer := c.Peer
 	b.mu.Unlock()
 
 	b.broadcast(map[string]any{
-		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now,
+		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "direction": dir, "peer": peer, "reason": reason, "endedAt": now,
 	})
 	b.broadcastCallList()
 }

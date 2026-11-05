@@ -347,10 +347,20 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 		return
 	}
 	info := signaling.ExtractNodeInfo(node)
-	reason := core.EndCallReasonUserEnded
+	reason := core.EndCallReasonDeclined
 	if info != nil {
 		if r := wanode.AttrString(info.InnerNode.Attrs, "reason"); r != "" {
 			reason = core.EndCallReason(r)
+		} else if info.Tag == "reject" {
+			reason = core.EndCallReasonDeclined
+		} else if call.IsInitiator() {
+			if call.StateData.State != core.CallStateActive {
+				reason = core.EndCallReasonDeclined
+			} else {
+				reason = core.EndCallReasonCancelled
+			}
+		} else {
+			reason = core.EndCallReasonUserEnded
 		}
 	}
 	m.log.Info("[CALL] Call ended (terminated by peer)", "call_id", call.CallID, "reason", string(reason))

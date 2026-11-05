@@ -167,12 +167,14 @@ func (s *Session) handleCallEvent(kind string, from types.JID, id string, data *
 	switch kind {
 	case "offer":
 		s.onIncomingOffer(ctx, from, id, data)
-	case "receipt:offer", "preaccept":
-		// Both preaccept and receipt:offer from the remote peer indicate that the
-		// recipient's device has received the offer and is showing the incoming call screen (ringing).
+	case "preaccept":
+		// Only true remote <preaccept> confirms the recipient's phone is ringing.
 		if ac, ok := s.callForEvent(from, id, data); ok {
 			ac.cm.HandleCallPreaccept(ctx, wrapCall(from, id, data), from)
 		}
+	case "receipt:offer":
+		// Delivery receipt: peer device received the stanza, but has not necessarily started ringing yet.
+		s.log.Debug("[CALL] offer delivery receipt received", "from", from.String())
 	case "receipt:accept", "accept":
 		if ac, ok := s.callForEvent(from, id, data); ok {
 			ac.cm.HandleCallAccept(ctx, wrapCall(from, id, data), from)

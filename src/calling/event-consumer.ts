@@ -20,6 +20,8 @@ export class WaCallsEventConsumer extends EventEmitter {
   private authStateCache: Map<string, { paired: boolean; state: string }> = new Map();
   // CallId -> StartedAt timestamp
   private callStartTimes: Map<string, number> = new Map();
+  // CallId -> Direction ('inbound' | 'outbound')
+  private callDirections: Map<string, 'inbound' | 'outbound'> = new Map();
   // SessionId -> SessionName reverse mapping
   private sessionNameMap: Map<string, string> = new Map();
 
@@ -168,6 +170,7 @@ export class WaCallsEventConsumer extends EventEmitter {
         case 'incoming': {
           const sessionName = this.getSessionName(event.sessionId);
           this.callStartTimes.set(event.id, event.offeredAt || Date.now());
+          this.callDirections.set(event.id, 'inbound');
 
           const payload: VoiceCallWebhookPayload = {
             callId: event.id,
@@ -186,12 +189,15 @@ export class WaCallsEventConsumer extends EventEmitter {
 
         case 'call-status': {
           const sessionName = this.getSessionName(event.sessionId);
+          const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(event.id) || (event.owner ? 'outbound' : 'outbound');
+          this.callDirections.set(event.id, dir);
+
           if (event.status === 'ringing') {
             const payload: VoiceCallWebhookPayload = {
               callId: event.id,
               sessionId: event.sessionId,
               peer: event.peer,
-              direction: event.direction || (event.owner ? 'outbound' : 'inbound'),
+              direction: dir,
               status: 'ringing',
               startedAt: event.startedAt || Date.now(),
             };
@@ -202,7 +208,7 @@ export class WaCallsEventConsumer extends EventEmitter {
               callId: event.id,
               sessionId: event.sessionId,
               peer: event.peer,
-              direction: event.direction || (event.owner ? 'outbound' : 'inbound'),
+              direction: dir,
               status: 'active',
               startedAt: event.startedAt || Date.now(),
             };
@@ -219,12 +225,14 @@ export class WaCallsEventConsumer extends EventEmitter {
           const endedAt = event.endedAt || Date.now();
           const durationMs = startedAt ? endedAt - startedAt : undefined;
           this.callStartTimes.delete(event.id);
+          const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(event.id) || (event.owner ? 'outbound' : 'outbound');
+          this.callDirections.delete(event.id);
 
           const payload: VoiceCallWebhookPayload = {
             callId: event.id,
             sessionId: event.sessionId,
-            peer: '',
-            direction: event.owner ? 'outbound' : 'inbound',
+            peer: event.peer || '',
+            direction: dir,
             status: 'ended',
             startedAt,
             endedAt,

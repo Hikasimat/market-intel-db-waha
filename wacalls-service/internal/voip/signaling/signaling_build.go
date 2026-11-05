@@ -47,6 +47,11 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 		offerContent = append(offerContent, waBinary.Node{Tag: "privacy", Content: token})
 	}
 
+	offerContent = append(offerContent,
+		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "8000"}},
+		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
+	)
+
 	if isVideo {
 		offerContent = append(offerContent, waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
 			"enc": "vp8", "dec": "vp8", "orientation": "0",
@@ -55,8 +60,6 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	}
 
 	offerContent = append(offerContent,
-		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "8000"}},
-		waBinary.Node{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 		waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capabilityOffer},
 		waBinary.Node{Tag: "destination", Content: destinations},
@@ -178,7 +181,6 @@ func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JI
 				{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 				{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
 				{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capabilityPreaccept},
-				{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 			},
 		}},
 	}

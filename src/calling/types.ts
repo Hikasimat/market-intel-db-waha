@@ -25,7 +25,7 @@ export type WaCallsSSEEvent =
   | { type: 'incoming'; sessionId: string; id: string; peer: string; offeredAt: number }
   | { type: 'incoming-claimed'; sessionId: string; id: string; owner: string }
   | { type: 'call-status'; sessionId: string; id: string; owner?: string | null; direction?: 'inbound' | 'outbound'; status: 'starting' | 'ringing' | 'connected' | 'ended'; peer: string; startedAt: number }
-  | { type: 'call-ended'; sessionId: string; id: string; owner?: string | null; reason?: string; endedAt: number }
+  | { type: 'call-ended'; sessionId: string; id: string; owner?: string | null; direction?: 'inbound' | 'outbound'; peer?: string; reason?: string; endedAt: number }
   | { type: 'call-list'; calls: WaCallsCallRecord[] };
 
 export interface VoiceCallWebhookPayload {

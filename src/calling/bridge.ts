@@ -46,7 +46,7 @@ export function nodeToJson(node: BinaryNode): JsonNode {
     out.content = c.map((child) => nodeToJson(child as BinaryNode));
   } else if (typeof c === 'string') {
     out.content = c;
-  } else if (c instanceof Uint8Array) {
+  } else if (Buffer.isBuffer(c) || c instanceof Uint8Array) {
     out.content = { $b: Buffer.from(c).toString('base64') };
   }
   return out;
@@ -85,6 +85,7 @@ export class CallingBridge {
   private sockets = new Map<string, WASocket>();
   private listening = new WeakSet<object>();
   private callingSessionIds = new Map<string, string>(); // WAHA session name -> engine session id
+  private recentAckStanzaIds = new Set<string>();
 
   /** Name the engine knows the session by. */
   public static engineName(wahaSession: string): string {
@@ -112,11 +113,6 @@ export class CallingBridge {
         (sock.ws as any).on('CB:call', (node: BinaryNode) => this.forwardCallNode(wahaSession, node));
         // Server ACK for call offer — carries relay/SSRC data the engine needs.
         (sock.ws as any).on('CB:ack,class:call', (node: BinaryNode) => this.forwardCallAck(wahaSession, node));
-        (sock.ws as any).on('CB:ack', (node: BinaryNode) => {
-          if (node.attrs?.class === 'call') {
-            this.forwardCallAck(wahaSession, node);
-          }
-        });
         // Receipt events that confirm call acceptance from a linked device or the recipient.
         (sock.ws as any).on('CB:receipt', (node: BinaryNode) => this.forwardReceiptNode(wahaSession, node));
       }
@@ -252,6 +248,10 @@ export class CallingBridge {
       const typ = node.attrs?.type;
       if (cls !== 'call') return; // only forward call-class ACKs
       const stanzaId = node.attrs?.id || '';
+      const ackKey = `${sid}:${stanzaId}:${typ}`;
+      if (this.recentAckStanzaIds.has(ackKey)) return;
+      this.recentAckStanzaIds.add(ackKey);
+      setTimeout(() => this.recentAckStanzaIds.delete(ackKey), 15000);
 
       logger.info(
         `[CALL][${wahaSession}] Forwarding call ACK class=${cls} type=${typ} stanza-id=${stanzaId}`
