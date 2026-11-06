@@ -11,7 +11,6 @@ import { contactsRouter } from './routes/contacts.js';
 import { groupsRouter } from './routes/groups.js';
 import { filesRouter } from './routes/files.js';
 import { callingRouter } from './routes/calling.js';
-import { callingUIRouter } from './routes/calling-ui.js';
 import { callingBridgeRouter } from './routes/calling-bridge.js';
 
 export function createApp(): Express {
@@ -43,7 +42,6 @@ export function createApp(): Express {
   app.use('/worklets', express.static(path.resolve('public/worklets')));
   app.use(express.static(path.resolve('public')));
   app.use(healthRouter);
-  app.use(callingUIRouter);
   // Internal engine -> Baileys RPC (own shared-token auth, not the public API key)
   app.use(callingBridgeRouter);
 

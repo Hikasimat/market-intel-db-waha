@@ -72,25 +72,15 @@ func (c *CallInfo) IsInitiator() bool { return c.Direction == core.CallDirection
 func (c *CallInfo) IsActive() bool { return c.StateData.State == core.CallStateActive }
 
 func (c *CallInfo) IsRinging() bool {
-	return c.StateData.State == core.CallStateRemoteRinging ||
-		c.StateData.State == core.CallStateIncomingRinging
+	return c.StateData.State == core.CallStateRinging || c.StateData.State == core.CallStateIncomingRinging
 }
 
-func (c *CallInfo) IsEnded() bool {
-	return c.StateData.State == core.CallStateEnded ||
-		c.StateData.State == core.CallStateRejected ||
-		c.StateData.State == core.CallStateBusy ||
-		c.StateData.State == core.CallStateTimeout ||
-		c.StateData.State == core.CallStateFailed
-}
+func (c *CallInfo) IsEnded() bool { return c.StateData.State == core.CallStateEnded }
 
 func (c *CallInfo) CanAccept() bool { return c.StateData.State == core.CallStateIncomingRinging }
 
 func (c *CallInfo) CanReject() bool {
-	return c.StateData.State == core.CallStateIncomingRinging ||
-		c.StateData.State == core.CallStateRemoteRinging ||
-		c.StateData.State == core.CallStateOfferSent ||
-		c.StateData.State == core.CallStateServerAcknowledged
+	return c.StateData.State == core.CallStateIncomingRinging || c.StateData.State == core.CallStateRinging
 }
 
 type InvalidTransition struct {
@@ -103,20 +93,18 @@ func (e *InvalidTransition) Error() string {
 }
 
 const (
-	TransitionOfferSent          = "offer_sent"
-	TransitionOfferReceived      = "offer_received"
-	TransitionServerAcknowledged = "server_acknowledged"
-	TransitionRemoteRinging      = "remote_ringing"
-	TransitionLocalAccepted      = "local_accepted"
-	TransitionRemoteAccepted     = "remote_accepted"
-	TransitionLocalRejected      = "local_rejected"
-	TransitionRemoteRejected     = "remote_rejected"
-	TransitionMediaConnected     = "media_connected"
-	TransitionTerminated         = "terminated"
-	TransitionHold               = "hold"
-	TransitionResume             = "resume"
-	TransitionAudioMuteChanged   = "audio_mute_changed"
-	TransitionVideoStateChanged  = "video_state_changed"
+	TransitionOfferSent         = "offer_sent"
+	TransitionOfferReceived     = "offer_received"
+	TransitionLocalAccepted     = "local_accepted"
+	TransitionRemoteAccepted    = "remote_accepted"
+	TransitionLocalRejected     = "local_rejected"
+	TransitionRemoteRejected    = "remote_rejected"
+	TransitionMediaConnected    = "media_connected"
+	TransitionTerminated        = "terminated"
+	TransitionHold              = "hold"
+	TransitionResume            = "resume"
+	TransitionAudioMuteChanged  = "audio_mute_changed"
+	TransitionVideoStateChanged = "video_state_changed"
 )
 
 type Transition struct {
@@ -136,19 +124,7 @@ func (c *CallInfo) ApplyTransition(t Transition) error {
 		if s.State != core.CallStateInitiating {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
-		s.State = core.CallStateOfferSent
-
-	case TransitionServerAcknowledged:
-		if s.State != core.CallStateOfferSent && s.State != core.CallStateInitiating {
-			return &InvalidTransition{string(s.State), t.Type}
-		}
-		s.State = core.CallStateServerAcknowledged
-
-	case TransitionRemoteRinging:
-		if s.State != core.CallStateServerAcknowledged && s.State != core.CallStateOfferSent && s.State != core.CallStateInitiating {
-			return &InvalidTransition{string(s.State), t.Type}
-		}
-		s.State = core.CallStateRemoteRinging
+		s.State = core.CallStateRinging
 
 	case TransitionOfferReceived:
 		if s.State != core.CallStateInitiating {
@@ -158,24 +134,24 @@ func (c *CallInfo) ApplyTransition(t Transition) error {
 		s.Silenced = t.Silenced
 
 	case TransitionRemoteAccepted:
-		if s.State != core.CallStateRemoteRinging && s.State != core.CallStateServerAcknowledged && s.State != core.CallStateOfferSent {
+		if s.State != core.CallStateRinging {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
-		s.State = core.CallStateMediaConnecting
+		s.State = core.CallStateConnecting
 		s.AcceptedAt = &now
 
 	case TransitionLocalAccepted:
 		if s.State != core.CallStateIncomingRinging {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
-		s.State = core.CallStateMediaConnecting
+		s.State = core.CallStateConnecting
 		s.AcceptedAt = &now
 
 	case TransitionRemoteRejected:
-		if c.IsEnded() {
+		if s.State != core.CallStateRinging {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
-		s.State = core.CallStateRejected
+		s.State = core.CallStateEnded
 		s.EndedAt = &now
 		s.EndReason = t.Reason
 
@@ -183,12 +159,12 @@ func (c *CallInfo) ApplyTransition(t Transition) error {
 		if s.State != core.CallStateIncomingRinging {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
-		s.State = core.CallStateRejected
+		s.State = core.CallStateEnded
 		s.EndedAt = &now
 		s.EndReason = t.Reason
 
 	case TransitionMediaConnected:
-		if s.State != core.CallStateMediaConnecting && s.State != core.CallStateRemoteAccepted {
+		if s.State != core.CallStateConnecting {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
 		s.State = core.CallStateActive
@@ -196,24 +172,13 @@ func (c *CallInfo) ApplyTransition(t Transition) error {
 		s.VideoOff = c.MediaType != core.CallMediaTypeVideo
 
 	case TransitionTerminated:
-		if c.IsEnded() {
+		if s.State == core.CallStateEnded {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
 		if (s.State == core.CallStateActive || s.State == core.CallStateOnHold) && s.ConnectedAt != nil {
 			s.DurationSecs = int(now.Sub(*s.ConnectedAt).Seconds())
 		}
-		switch t.Reason {
-		case core.EndCallReasonBusy:
-			s.State = core.CallStateBusy
-		case core.EndCallReasonTimeout:
-			s.State = core.CallStateTimeout
-		case core.EndCallReasonFailed:
-			s.State = core.CallStateFailed
-		case core.EndCallReasonDeclined:
-			s.State = core.CallStateRejected
-		default:
-			s.State = core.CallStateEnded
-		}
+		s.State = core.CallStateEnded
 		s.EndedAt = &now
 		s.EndReason = t.Reason
 

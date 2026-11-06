@@ -1,7 +1,6 @@
 package signaling
 
 import (
-	"strings"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/wanode"
 
@@ -20,15 +19,54 @@ type NodeInfo struct {
 }
 
 func ExtractNodeInfo(node *waBinary.Node) *NodeInfo {
+	if node == nil {
+		return nil
+	}
+	if node.Tag != "call" {
+		callID := wanode.AttrString(node.Attrs, "call-id")
+		if callID == "" {
+			for _, child := range wanode.NodeChildren(node) {
+				if id := wanode.AttrString(child.Attrs, "call-id"); id != "" {
+					callID = id
+					break
+				}
+			}
+		}
+		peerJid := wanode.AttrString(node.Attrs, "from")
+		if peerJid == "" {
+			peerJid = wanode.AttrString(node.Attrs, "call-creator")
+		}
+		return &NodeInfo{
+			Tag:            node.Tag,
+			PeerJid:        peerJid,
+			CallID:         callID,
+			PeerPlatform:   wanode.AttrString(node.Attrs, "platform"),
+			PeerAppVersion: wanode.AttrString(node.Attrs, "version"),
+			EpochID:        wanode.AttrString(node.Attrs, "e"),
+			Timestamp:      wanode.AttrString(node.Attrs, "t"),
+			InnerNode:      node,
+		}
+	}
 	children := wanode.NodeChildren(node)
 	if len(children) == 0 {
 		return nil
 	}
 	inner := children[0]
+	callID := wanode.AttrString(inner.Attrs, "call-id")
+	if callID == "" {
+		callID = wanode.AttrString(node.Attrs, "call-id")
+	}
+	peerJid := wanode.AttrString(node.Attrs, "from")
+	if peerJid == "" {
+		peerJid = wanode.AttrString(inner.Attrs, "from")
+		if peerJid == "" {
+			peerJid = wanode.AttrString(inner.Attrs, "call-creator")
+		}
+	}
 	return &NodeInfo{
 		Tag:            inner.Tag,
-		PeerJid:        wanode.AttrString(node.Attrs, "from"),
-		CallID:         wanode.AttrString(inner.Attrs, "call-id"),
+		PeerJid:        peerJid,
+		CallID:         callID,
 		PeerPlatform:   wanode.AttrString(node.Attrs, "platform"),
 		PeerAppVersion: wanode.AttrString(node.Attrs, "version"),
 		EpochID:        wanode.AttrString(inner.Attrs, "e"),
@@ -83,29 +121,13 @@ func ExtractRelayEndpoints(node *waBinary.Node) []core.RelayEndpoint {
 	return relays
 }
 
-func findEncNodes(inner *waBinary.Node, sock core.VoipSocket) []*waBinary.Node {
-	var prioritized []*waBinary.Node
-	var others []*waBinary.Node
-
+func findEncNode(inner *waBinary.Node) *waBinary.Node {
 	for _, c := range wanode.NodeChildren(inner) {
 		c := c
 		if c.Tag == "enc" && wanode.HasAttr(c.Attrs, "type") {
-			prioritized = append(prioritized, &c)
+			return &c
 		}
 	}
-
-	var ourLid, ourLidBase, ourPn, ourPnBase string
-	if sock != nil {
-		if l := sock.OwnLID(); !l.IsEmpty() {
-			ourLid = l.String()
-			ourLidBase = l.ToNonAD().String()
-		}
-		if p := sock.OwnPN(); !p.IsEmpty() {
-			ourPn = p.String()
-			ourPnBase = p.ToNonAD().String()
-		}
-	}
-
 	for _, c := range wanode.NodeChildren(inner) {
 		if c.Tag != "destination" {
 			continue
@@ -114,34 +136,13 @@ func findEncNodes(inner *waBinary.Node, sock core.VoipSocket) []*waBinary.Node {
 			if toNode.Tag != "to" {
 				continue
 			}
-			toJid := wanode.AttrString(toNode.Attrs, "jid")
 			for _, e := range wanode.NodeChildren(&toNode) {
 				e := e
 				if e.Tag == "enc" && wanode.HasAttr(e.Attrs, "type") {
-					isOurDevice := false
-					if ourLid != "" && (toJid == ourLid || (ourLidBase != "" && strings.HasPrefix(toJid, ourLidBase))) {
-						isOurDevice = true
-					}
-					if ourPn != "" && (toJid == ourPn || (ourPnBase != "" && strings.HasPrefix(toJid, ourPnBase))) {
-						isOurDevice = true
-					}
-					if isOurDevice {
-						prioritized = append(prioritized, &e)
-					} else {
-						others = append(others, &e)
-					}
+					return &e
 				}
 			}
 		}
-	}
-
-	return append(prioritized, others...)
-}
-
-func findEncNode(inner *waBinary.Node) *waBinary.Node {
-	nodes := findEncNodes(inner, nil)
-	if len(nodes) > 0 {
-		return nodes[0]
 	}
 	return nil
 }

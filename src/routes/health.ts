@@ -220,6 +220,87 @@ healthRouter.get('/', dashboardBasicAuth, (req, res) => {
       border-color: var(--accent-hover);
       color: #000;
     }
+    .btn-danger {
+      background: var(--rose);
+      color: #fff;
+      border-color: var(--rose);
+    }
+    .btn-danger:hover {
+      background: #e11d48;
+      border-color: #e11d48;
+      color: #fff;
+    }
+
+    /* Voice Calling Tab Styles */
+    .calling-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 900px) {
+      .calling-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .dialpad-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      max-width: 280px;
+      margin: 16px auto;
+    }
+    .dialpad-btn {
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .dialpad-btn:hover {
+      background: var(--surface-3);
+      border-color: var(--accent);
+      transform: scale(1.04);
+    }
+    .dialpad-btn:active {
+      transform: scale(0.96);
+      background: var(--accent-dim);
+    }
+    .dialpad-btn .digit {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .dialpad-btn .sub {
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--text-dim);
+      letter-spacing: 1px;
+      margin-top: 3px;
+    }
+    .meter-bar-container {
+      background: var(--surface-2);
+      border-radius: 9999px;
+      height: 8px;
+      overflow: hidden;
+      margin-top: 6px;
+      border: 1px solid var(--border);
+    }
+    .meter-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #10b981 0%, #38bdf8 70%, #f59e0b 90%, #f43f5e 100%);
+      transition: width 0.08s ease;
+    }
+    .pulse-call {
+      animation: pulse-ring 1.5s infinite;
+    }
 
     main {
       max-width: 1280px;
@@ -546,6 +627,10 @@ healthRouter.get('/', dashboardBasicAuth, (req, res) => {
         WhatsApp Sessions &amp; QR
         <span id="tabSessionBadge" class="tab-badge">1</span>
       </button>
+      <button class="tab-btn" onclick="switchTab('calling')">
+        📞 Voice Calling
+        <span id="tabCallingBadge" class="tab-badge" style="display:none;background:#10b981;color:#fff;">LIVE</span>
+      </button>
       <button class="tab-btn" onclick="switchTab('webhooks')">
         Live Webhook Stream
         <span id="tabWebhookBadge" class="tab-badge">0</span>
@@ -824,7 +909,179 @@ const isTamperProof = crypto.timingSafeEqual(
         <button class="btn btn-primary" onclick="saveLocalApiKey()">Save Key to Browser</button>
       </div>
     </div>
+
+    <!-- TAB: VOICE CALLING (Integrated from selfMadeWacall) -->
+    <div id="tab-calling" class="tab-content" style="display: none;">
+      <!-- Integration Status Banner -->
+      <div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, rgba(37, 211, 102, 0.08) 0%, var(--surface-1) 100%); border-left: 4px solid var(--accent);">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">📞</span>
+              <span style="font-weight: 700; font-size: 16px;">WhatsApp VoIP Voice Calling</span>
+              <span id="callingEnginePill" class="pill pill-green">ENGINE ONLINE</span>
+            </div>
+            <p class="text-sm text-muted" style="margin-top: 6px;">
+              Unified Baileys Session &bull; Single QR Authentication &bull; Realtime Pion WebRTC + MLow 16kHz Audio Codec
+            </p>
+          </div>
+          <div style="font-size: 13px; color: var(--text-muted); text-align: right;">
+            <div>Linked Session: <b id="callingActiveSessionName" class="text-white" style="color: var(--text);">default</b></div>
+            <div style="margin-top: 4px;">WhatsApp Connection: <span id="callingPairedBadge" class="pill pill-green">CONNECTED</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Calling Main Grid -->
+      <div class="calling-grid">
+        <!-- LEFT: Controls & Dialer -->
+        <div>
+          <!-- Microphone Setup -->
+          <div class="card">
+            <div class="card-title">
+              <span>🎙️ Microphone Input</span>
+              <button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="loadAudioDevices()">↻ Refresh</button>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <select id="callingMicSelect" class="input" onchange="onMicDeviceChange()">
+                <option value="">Default Microphone</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Dialer & Keypad -->
+          <div class="card" style="margin-top: 16px;">
+            <div class="card-title">
+              <span>📱 Phone Dialer</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phone Number (E.164 with Country Code)</label>
+              <div style="display: flex; gap: 8px;">
+                <input id="callingPhoneInput" class="input" type="tel" placeholder="+1 (555) 000-0000" onkeydown="if(event.key==='Enter') dialCall()" style="font-size: 16px; font-weight: 600; letter-spacing: 0.5px;" />
+                <button class="btn" onclick="backspacePhone()" title="Backspace" style="padding: 0 14px; font-size: 16px;">⌫</button>
+                <button class="btn" onclick="clearPhone()" title="Clear" style="padding: 0 12px; font-size: 12px;">✕</button>
+              </div>
+            </div>
+
+            <!-- 3x4 Telephone Dialpad -->
+            <div class="dialpad-grid">
+              <div class="dialpad-btn" onclick="pressDialpad('1')"><div class="digit">1</div><div class="sub"></div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('2')"><div class="digit">2</div><div class="sub">ABC</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('3')"><div class="digit">3</div><div class="sub">DEF</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('4')"><div class="digit">4</div><div class="sub">GHI</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('5')"><div class="digit">5</div><div class="sub">JKL</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('6')"><div class="digit">6</div><div class="sub">MNO</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('7')"><div class="digit">7</div><div class="sub">PQRS</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('8')"><div class="digit">8</div><div class="sub">TUV</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('9')"><div class="digit">9</div><div class="sub">WXYZ</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('*')"><div class="digit">*</div><div class="sub"></div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('0')"><div class="digit">0</div><div class="sub">+</div></div>
+              <div class="dialpad-btn" onclick="pressDialpad('#')"><div class="digit">#</div><div class="sub"></div></div>
+            </div>
+
+            <button id="callingDialBtn" class="btn btn-primary" onclick="dialCall()" style="width: 100%; justify-content: center; padding: 12px; font-size: 15px; margin-top: 8px;">
+              📞 Call WhatsApp Contact
+            </button>
+          </div>
+        </div>
+
+        <!-- RIGHT: Active Call / Idle State & Call History -->
+        <div>
+          <!-- Active Call Card -->
+          <div id="callingActiveCard" class="card" style="display: none; border-color: var(--accent); background: linear-gradient(180deg, rgba(37, 211, 102, 0.05) 0%, var(--surface-1) 100%);">
+            <div class="card-title">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="pulse-dot"></span>
+                <span>Active WhatsApp Voice Call</span>
+              </div>
+              <span id="callStateBadge" class="pill pill-green">CONNECTED</span>
+            </div>
+            <div style="text-align: center; padding: 16px 0;">
+              <div id="callAvatarIcon" style="width: 68px; height: 68px; border-radius: 50%; background: var(--accent-dim); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; font-size: 32px; margin-bottom: 12px;">
+                📞
+              </div>
+              <div id="callPeerNumber" style="font-size: 22px; font-weight: 700; letter-spacing: 0.5px;">+1234567890</div>
+              <div id="callDirectionBadge" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Outgoing Call</div>
+              <div id="callDurationTimer" style="font-family: 'JetBrains Mono', monospace; font-size: 16px; color: var(--accent); margin-top: 8px; font-weight: 700;">00:00</div>
+            </div>
+
+            <!-- Dual Real-time dB Audio Visualizer -->
+            <div style="background: var(--surface-2); border-radius: var(--radius-sm); padding: 16px; margin: 16px 0; border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted);">
+                <span>🎙️ Microphone (Local Input)</span>
+                <span id="micDbLabel" style="font-family: 'JetBrains Mono', monospace;">-60 dB</span>
+              </div>
+              <div class="meter-bar-container">
+                <div id="micMeterFill" class="meter-bar-fill"></div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-top: 14px;">
+                <span>🔊 WhatsApp Peer Audio (Remote Output)</span>
+                <span id="peerDbLabel" style="font-family: 'JetBrains Mono', monospace;">-60 dB</span>
+              </div>
+              <div class="meter-bar-container">
+                <div id="peerMeterFill" class="meter-bar-fill"></div>
+              </div>
+            </div>
+
+            <!-- In-Call Actions -->
+            <div style="display: flex; gap: 12px; justify-content: center; margin-top: 16px;">
+              <button id="callingMuteBtn" class="btn" onclick="toggleMuteMic()" style="flex: 1; justify-content: center; padding: 12px;">
+                🎤 Mute Mic
+              </button>
+              <button class="btn btn-danger" onclick="hangupCurrentCall()" style="flex: 1; justify-content: center; padding: 12px;">
+                🔴 End Call
+              </button>
+            </div>
+            <audio id="callingRemoteAudio" autoplay></audio>
+          </div>
+
+          <!-- Idle State Card -->
+          <div id="callingIdleCard" class="card" style="text-align: center; padding: 48px 24px; color: var(--text-muted);">
+            <div style="font-size: 48px; margin-bottom: 12px; opacity: 0.6;">📞</div>
+            <div style="font-size: 17px; font-weight: 700; color: var(--text);">Voice Calling Ready</div>
+            <p style="font-size: 13px; max-width: 380px; margin: 8px auto 0; line-height: 1.5;">
+              Dial any WhatsApp phone number with international country code to start an outgoing call, or keep this tab open to receive incoming WhatsApp voice calls in realtime.
+            </p>
+          </div>
+
+          <!-- Call History -->
+          <div class="card" style="margin-top: 16px;">
+            <div class="card-title">
+              <span>📜 Call History</span>
+              <button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="loadCallHistory()">↻ Refresh History</button>
+            </div>
+            <div id="callHistoryContainer">
+              <div class="text-sm text-muted" style="padding: 12px 0;">No call records yet.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
+
+  <!-- Incoming WhatsApp Call Modal (with Web Audio US ringtone generator) -->
+  <div id="incomingCallModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 200; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: var(--surface-1); border: 2px solid var(--accent); border-radius: 18px; max-width: 400px; width: 100%; text-align: center; padding: 32px 24px; box-shadow: 0 0 50px rgba(37, 211, 102, 0.35);">
+      <div style="width: 72px; height: 72px; border-radius: 50%; background: var(--accent-dim); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; font-size: 36px; margin-bottom: 16px;" class="pulse-call">
+        📞
+      </div>
+      <div style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700;">
+        Incoming WhatsApp Voice Call
+      </div>
+      <div id="incomingCallerNumber" style="font-size: 22px; font-weight: 700; margin: 10px 0 24px; word-break: break-all; color: var(--text);">
+        +1234567890
+      </div>
+      <div style="display: flex; gap: 24px; justify-content: center;">
+        <button class="btn btn-danger" onclick="rejectIncomingCall()" style="width: 60px; height: 60px; border-radius: 50%; justify-content: center; font-size: 22px; padding: 0;" title="Decline Call">
+          ✕
+        </button>
+        <button class="btn btn-primary" onclick="acceptIncomingCall()" style="width: 60px; height: 60px; border-radius: 50%; justify-content: center; font-size: 22px; padding: 0;" title="Accept Call">
+          📞
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal for JSON Inspection -->
   <div id="inspectModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); z-index: 100; align-items: center; justify-content: center; padding: 20px;">
@@ -882,6 +1139,714 @@ const isTamperProof = crypto.timingSafeEqual(
 
       event?.currentTarget?.classList?.add('active') ||
         Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick')?.includes(tabId))?.classList?.add('active');
+
+      if (tabId === 'calling') {
+        initCallingTab();
+      }
+    }
+
+    // =========================================================================
+    // WHATSAPP VOIP VOICE CALLING (Integrated from selfMadeWacall)
+    // =========================================================================
+
+    let currentCallingSession = 'default';
+    let callingEventSource = null;
+    let activeCallState = null;
+    let incomingCallPending = null;
+    let selectedMicId = localStorage.getItem('waha_calling_mic_id') || null;
+    let activeRingHandle = null;
+
+    // --- Audio PCM Conversion Utilities (from selfMadeWacall/client/src/lib/pcm.ts) ---
+    function float32ToInt16LE(pcm) {
+      const view = new DataView(new ArrayBuffer(pcm.length * 2));
+      for (let i = 0; i < pcm.length; i++) {
+        let s = pcm[i];
+        if (isNaN(s)) s = 0;
+        else if (s > 1) s = 1;
+        else if (s < -1) s = -1;
+        view.setInt16(i * 2, s < 0 ? Math.round(s * 32768) : Math.round(s * 32767), true);
+      }
+      return view.buffer;
+    }
+
+    function int16LEToFloat32(buf) {
+      const view = new DataView(buf);
+      const n = Math.floor(buf.byteLength / 2);
+      const out = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        out[i] = view.getInt16(i * 2, true) / 32768;
+      }
+      return out;
+    }
+
+    // --- Web Audio RMS Meter (from selfMadeWacall/client/src/lib/audio-meter.ts) ---
+    function attachMeter(stream, onDb) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || !stream) return function() {};
+      try {
+        const ctx = new AC();
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        src.connect(analyser);
+        const data = new Float32Array(analyser.fftSize);
+        let stopped = false;
+        function tick() {
+          if (stopped) return;
+          analyser.getFloatTimeDomainData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+          const rms = Math.sqrt(sum / data.length);
+          const db = rms > 0 ? Math.max(-60, Math.min(0, 20 * Math.log10(rms))) : -60;
+          onDb(db);
+          requestAnimationFrame(tick);
+        }
+        tick();
+        return function() {
+          stopped = true;
+          try { src.disconnect(); analyser.disconnect(); ctx.close(); } catch (e) {}
+        };
+      } catch (e) {
+        return function() {};
+      }
+    }
+
+    // --- Dual-Tone Ring Generator (from selfMadeWacall/client/src/components/domain/call/IncomingCallModal.tsx) ---
+    function startIncomingRingLoop() {
+      if (activeRingHandle) return activeRingHandle;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      let ctx;
+      try { ctx = new AC(); } catch (e) { return null; }
+      let cancelled = false;
+      function playToneAt(when, durationSec, freq, gainVal) {
+        if (!gainVal) gainVal = 0.18;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const t = ctx.currentTime + when;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(gainVal, t + 0.02);
+        gain.gain.linearRampToValueAtTime(gainVal, t + durationSec - 0.02);
+        gain.gain.linearRampToValueAtTime(0, t + durationSec);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + durationSec + 0.05);
+      }
+      function scheduleCycle() {
+        if (cancelled) return;
+        playToneAt(0, 1.0, 440);
+        playToneAt(0, 1.0, 480);
+        setTimeout(scheduleCycle, 3000);
+      }
+      scheduleCycle();
+      activeRingHandle = {
+        stop: function() {
+          cancelled = true;
+          activeRingHandle = null;
+          try { ctx.close().catch(function() {}); } catch (e) {}
+        }
+      };
+      return activeRingHandle;
+    }
+
+    function stopIncomingRingLoop() {
+      if (activeRingHandle) {
+        activeRingHandle.stop();
+        activeRingHandle = null;
+      }
+    }
+
+    // --- Keypad DTMF Click Tone Generator ---
+    function playDialpadTone(digit) {
+      const dtmfFreqs = {
+        '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
+        '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
+        '7': [852, 1209], '8': [852, 1336], '9': [852, 1477],
+        '*': [941, 1209], '0': [941, 1336], '#': [941, 1477]
+      };
+      const pair = dtmfFreqs[digit];
+      if (!pair) return;
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AC();
+        const t = ctx.currentTime;
+        [pair[0], pair[1]].forEach(function(freq) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.05, t);
+          gain.gain.linearRampToValueAtTime(0, t + 0.12);
+          osc.connect(gain).connect(ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.12);
+        });
+        setTimeout(function() { try { ctx.close().catch(function() {}); } catch (e) {} }, 200);
+      } catch (e) {}
+    }
+
+    // --- Audio Devices Enumeration ---
+    async function loadAudioDevices() {
+      const select = document.getElementById('callingMicSelect');
+      if (!select) return;
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          select.innerHTML = '<option value="">Default Microphone</option>';
+          return;
+        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter(function(d) { return d.kind === 'audioinput'; });
+        select.innerHTML = '<option value="">Default Microphone</option>';
+        mics.forEach(function(m, idx) {
+          const opt = document.createElement('option');
+          opt.value = m.deviceId;
+          opt.innerText = m.label || ('Microphone ' + (idx + 1));
+          if (selectedMicId && m.deviceId === selectedMicId) {
+            opt.selected = true;
+          }
+          select.appendChild(opt);
+        });
+      } catch (err) {
+        console.warn('Error loading audio devices:', err);
+      }
+    }
+
+    function onMicDeviceChange() {
+      const select = document.getElementById('callingMicSelect');
+      selectedMicId = select ? select.value : null;
+      if (selectedMicId) {
+        localStorage.setItem('waha_calling_mic_id', selectedMicId);
+      } else {
+        localStorage.removeItem('waha_calling_mic_id');
+      }
+    }
+
+    // --- Dialer & Keypad Handlers ---
+    function pressDialpad(digit) {
+      playDialpadTone(digit);
+      const input = document.getElementById('callingPhoneInput');
+      if (input) {
+        input.value = (input.value || '') + digit;
+        input.focus();
+      }
+    }
+
+    function backspacePhone() {
+      const input = document.getElementById('callingPhoneInput');
+      if (input && input.value.length > 0) {
+        input.value = input.value.slice(0, -1);
+        input.focus();
+      }
+    }
+
+    function clearPhone() {
+      const input = document.getElementById('callingPhoneInput');
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+    }
+
+    // --- Voice Calling Initiation & WebRTC Connection ---
+    async function dialCall() {
+      const input = document.getElementById('callingPhoneInput');
+      const phone = input ? input.value.trim() : '';
+      if (!phone) {
+        alert('Please enter a WhatsApp phone number with country code (e.g. +1234567890).');
+        return;
+      }
+      if (activeCallState) {
+        alert('A call is already active. End the current call before dialing a new one.');
+        return;
+      }
+
+      const dialBtn = document.getElementById('callingDialBtn');
+      if (dialBtn) {
+        dialBtn.disabled = true;
+        dialBtn.innerText = 'Dialing…';
+      }
+
+      try {
+        const apiKey = getApiKey();
+        const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+
+        const res = await fetch('/api/calling/sessions/' + encodeURIComponent(currentCallingSession) + '/calls', {
+          method: 'POST',
+          headers: headers,
+          body: JSON.stringify({ phone: phone }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(function() { return {}; });
+          throw new Error(errData.error || ('HTTP ' + res.status));
+        }
+
+        const data = await res.json();
+        const callId = data.callId || data.id;
+        input.value = '';
+        await startWebRTC(currentCallingSession, callId, phone, 'outbound');
+      } catch (err) {
+        alert('Call failed: ' + err.message);
+      } finally {
+        if (dialBtn) {
+          dialBtn.disabled = false;
+          dialBtn.innerText = '📞 Call WhatsApp Contact';
+        }
+      }
+    }
+
+    async function startWebRTC(sessionName, callId, peer, direction) {
+      if (!callId || callId === 'undefined') {
+        throw new Error('Invalid call ID (undefined)');
+      }
+      const activeCard = document.getElementById('callingActiveCard');
+      const idleCard = document.getElementById('callingIdleCard');
+      const peerNumberEl = document.getElementById('callPeerNumber');
+      const dirBadgeEl = document.getElementById('callDirectionBadge');
+      const stateBadge = document.getElementById('callStateBadge');
+      const timerEl = document.getElementById('callDurationTimer');
+      const tabBadge = document.getElementById('tabCallingBadge');
+
+      if (activeCard) activeCard.style.display = 'block';
+      if (idleCard) idleCard.style.display = 'none';
+      if (peerNumberEl) peerNumberEl.innerText = peer;
+      if (dirBadgeEl) dirBadgeEl.innerText = direction === 'inbound' ? '↙ Incoming Call' : '↗ Outgoing Call';
+      if (stateBadge) {
+        stateBadge.innerText = 'RINGING...';
+        stateBadge.className = 'pill pill-amber';
+      }
+      if (tabBadge) tabBadge.style.display = 'inline-block';
+
+      const startTime = Date.now();
+      const timerInterval = setInterval(function() {
+        const elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+        const mins = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+        const secs = String(elapsedSec % 60).padStart(2, '0');
+        if (timerEl) timerEl.innerText = mins + ':' + secs;
+      }, 1000);
+
+      let webRtcConn = null;
+      let offMicMeter = null;
+      let offPeerMeter = null;
+
+      try {
+        const micStream = await navigator.mediaDevices.getUserMedia({
+          audio: selectedMicId ? { deviceId: { exact: selectedMicId } } : true,
+        });
+
+        const pc = new RTCPeerConnection({ iceServers: [] });
+        const dc = pc.createDataChannel('pcm', { ordered: true });
+        dc.binaryType = 'arraybuffer';
+
+        const ctx = new AudioContext({ sampleRate: 16000 });
+        await ctx.audioWorklet.addModule('/worklets/capture-processor.js');
+        await ctx.audioWorklet.addModule('/worklets/playback-processor.js');
+        await ctx.resume();
+
+        const micSource = ctx.createMediaStreamSource(micStream);
+        const captureNode = new AudioWorkletNode(ctx, 'capture-processor');
+        captureNode.port.onmessage = function(e) {
+          if (dc.readyState === 'open') {
+            dc.send(float32ToInt16LE(e.data));
+          }
+        };
+        micSource.connect(captureNode);
+        captureNode.connect(ctx.destination);
+
+        const playbackNode = new AudioWorkletNode(ctx, 'playback-processor');
+        const streamDest = ctx.createMediaStreamDestination();
+        playbackNode.connect(streamDest);
+        dc.onmessage = function(e) {
+          playbackNode.port.postMessage(int16LEToFloat32(e.data));
+        };
+
+        const remoteAudio = document.getElementById('callingRemoteAudio');
+        if (remoteAudio) {
+          remoteAudio.srcObject = streamDest.stream;
+          remoteAudio.play().catch(function() {});
+        }
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        await new Promise(function(resolve) {
+          if (pc.iceGatheringState === 'complete') resolve();
+          else {
+            const checkState = function() {
+              if (pc.iceGatheringState === 'complete') {
+                pc.removeEventListener('icegatheringstatechange', checkState);
+                resolve();
+              }
+            };
+            pc.addEventListener('icegatheringstatechange', checkState);
+          }
+        });
+
+        const apiKey = getApiKey();
+        const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+
+        const sdpRes = await fetch('/api/calling/sessions/' + encodeURIComponent(sessionName) + '/calls/' + encodeURIComponent(callId) + '/webrtc', {
+          method: 'POST',
+          headers: headers,
+          body: JSON.stringify({ sdp_offer: pc.localDescription.sdp }),
+        });
+
+        if (!sdpRes.ok) {
+          const errText = await sdpRes.text();
+          throw new Error('WebRTC exchange error: ' + errText);
+        }
+
+        const resJson = await sdpRes.json();
+        const answerSdp = resJson.sdp_answer || resJson.sdpAnswer;
+        if (!answerSdp) {
+          throw new Error('No SDP answer received from engine');
+        }
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+        webRtcConn = {
+          pc: pc,
+          micStream: micStream,
+          remoteStream: streamDest.stream,
+          close: function() {
+            try { micStream.getTracks().forEach(function(t) { t.stop(); }); } catch (e) {}
+            try { ctx.close().catch(function() {}); } catch (e) {}
+            try { pc.close(); } catch (e) {}
+          }
+        };
+
+        const micFill = document.getElementById('micMeterFill');
+        const micLabel = document.getElementById('micDbLabel');
+        offMicMeter = attachMeter(micStream, function(db) {
+          const pct = Math.max(0, Math.min(100, Math.round(((db + 60) / 60) * 100)));
+          if (micFill) micFill.style.width = pct + '%';
+          if (micLabel) micLabel.innerText = Math.round(db) + ' dB';
+        });
+
+        const peerFill = document.getElementById('peerMeterFill');
+        const peerLabel = document.getElementById('peerDbLabel');
+        offPeerMeter = attachMeter(streamDest.stream, function(db) {
+          const pct = Math.max(0, Math.min(100, Math.round(((db + 60) / 60) * 100)));
+          if (peerFill) peerFill.style.width = pct + '%';
+          if (peerLabel) peerLabel.innerText = Math.round(db) + ' dB';
+        });
+
+      } catch (wrtcErr) {
+        console.error('WebRTC initialization failed:', wrtcErr);
+        alert('Audio/WebRTC setup failed: ' + wrtcErr.message);
+        teardownCurrentCallState();
+        return;
+      }
+
+      activeCallState = {
+        sessionName: sessionName,
+        callId: callId,
+        peer: peer,
+        direction: direction,
+        startedAt: startTime,
+        timerInterval: timerInterval,
+        webRtcConn: webRtcConn,
+        offMicMeter: offMicMeter,
+        offPeerMeter: offPeerMeter,
+        isMuted: false,
+      };
+    }
+
+    function toggleMuteMic() {
+      if (!activeCallState || !activeCallState.webRtcConn || !activeCallState.webRtcConn.micStream) return;
+      const tracks = activeCallState.webRtcConn.micStream.getAudioTracks();
+      if (!tracks.length) return;
+      activeCallState.isMuted = !activeCallState.isMuted;
+      tracks[0].enabled = !activeCallState.isMuted;
+
+      const muteBtn = document.getElementById('callingMuteBtn');
+      if (muteBtn) {
+        if (activeCallState.isMuted) {
+          muteBtn.innerText = '🔇 Unmute Mic';
+          muteBtn.className = 'btn btn-danger';
+        } else {
+          muteBtn.innerText = '🎤 Mute Mic';
+          muteBtn.className = 'btn';
+        }
+      }
+    }
+
+    async function hangupCurrentCall() {
+      if (!activeCallState) return;
+      const sessionName = activeCallState.sessionName;
+      const callId = activeCallState.callId;
+      teardownCurrentCallState();
+
+      try {
+        const apiKey = getApiKey();
+        const headers = { 'Accept': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+        await fetch('/api/calling/sessions/' + encodeURIComponent(sessionName) + '/calls/' + encodeURIComponent(callId), {
+          method: 'DELETE',
+          headers: headers,
+        });
+      } catch (err) {
+        console.warn('Hangup request error:', err);
+      }
+
+      loadCallHistory();
+    }
+
+    function teardownCurrentCallState() {
+      if (!activeCallState) return;
+      clearInterval(activeCallState.timerInterval);
+      if (activeCallState.offMicMeter) activeCallState.offMicMeter();
+      if (activeCallState.offPeerMeter) activeCallState.offPeerMeter();
+      if (activeCallState.webRtcConn) activeCallState.webRtcConn.close();
+
+      const activeCard = document.getElementById('callingActiveCard');
+      const idleCard = document.getElementById('callingIdleCard');
+      const tabBadge = document.getElementById('tabCallingBadge');
+      const micFill = document.getElementById('micMeterFill');
+      const peerFill = document.getElementById('peerMeterFill');
+      const micLabel = document.getElementById('micDbLabel');
+      const peerLabel = document.getElementById('peerDbLabel');
+      const timerEl = document.getElementById('callDurationTimer');
+      const muteBtn = document.getElementById('callingMuteBtn');
+
+      if (activeCard) activeCard.style.display = 'none';
+      if (idleCard) idleCard.style.display = 'block';
+      if (tabBadge) tabBadge.style.display = 'none';
+      if (micFill) micFill.style.width = '0%';
+      if (peerFill) peerFill.style.width = '0%';
+      if (micLabel) micLabel.innerText = '-60 dB';
+      if (peerLabel) peerLabel.innerText = '-60 dB';
+      if (timerEl) timerEl.innerText = '00:00';
+      if (muteBtn) {
+        muteBtn.innerText = '🎤 Mute Mic';
+        muteBtn.className = 'btn';
+      }
+
+      activeCallState = null;
+    }
+
+    // --- Incoming Call Handlers ---
+    function handleIncomingCallEvent(payload) {
+      if (activeCallState) return; // Currently in another call
+      incomingCallPending = {
+        sessionName: payload.sessionName || currentCallingSession,
+        callId: payload.callId || payload.id,
+        peer: payload.peer,
+      };
+
+      const callerEl = document.getElementById('incomingCallerNumber');
+      const modal = document.getElementById('incomingCallModal');
+      if (callerEl) callerEl.innerText = payload.peer;
+      if (modal) modal.style.display = 'flex';
+
+      startIncomingRingLoop();
+    }
+
+    async function acceptIncomingCall() {
+      stopIncomingRingLoop();
+      const modal = document.getElementById('incomingCallModal');
+      if (modal) modal.style.display = 'none';
+
+      if (!incomingCallPending || !incomingCallPending.callId || incomingCallPending.callId === 'undefined') {
+        alert('Cannot accept call: invalid or missing call ID.');
+        return;
+      }
+      const sessionName = incomingCallPending.sessionName;
+      const callId = incomingCallPending.callId;
+      const peer = incomingCallPending.peer;
+      incomingCallPending = null;
+
+      try {
+        const apiKey = getApiKey();
+        const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+        const acceptRes = await fetch('/api/calling/sessions/' + encodeURIComponent(sessionName) + '/calls/' + encodeURIComponent(callId) + '/accept', {
+          method: 'POST',
+          headers: headers,
+        });
+        if (!acceptRes.ok) {
+          const errData = await acceptRes.json().catch(function() { return {}; });
+          throw new Error(errData.error || ('HTTP ' + acceptRes.status));
+        }
+
+        switchTab('calling');
+        await startWebRTC(sessionName, callId, peer, 'inbound');
+      } catch (err) {
+        alert('Failed accepting call: ' + err.message);
+      }
+    }
+
+    async function rejectIncomingCall() {
+      stopIncomingRingLoop();
+      const modal = document.getElementById('incomingCallModal');
+      if (modal) modal.style.display = 'none';
+
+      if (!incomingCallPending) return;
+      const sessionName = incomingCallPending.sessionName;
+      const callId = incomingCallPending.callId;
+      incomingCallPending = null;
+
+      try {
+        const apiKey = getApiKey();
+        const headers = { 'Accept': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+        await fetch('/api/calling/sessions/' + encodeURIComponent(sessionName) + '/calls/' + encodeURIComponent(callId) + '/reject', {
+          method: 'POST',
+          headers: headers,
+        });
+      } catch (err) {
+        console.warn('Reject call failed:', err);
+      }
+    }
+
+    function handleCallRingingEvent(payload) {
+      if (activeCallState && activeCallState.callId === (payload.callId || payload.id)) {
+        const stateBadge = document.getElementById('callStateBadge');
+        if (stateBadge) {
+          stateBadge.innerText = 'RINGING...';
+          stateBadge.className = 'pill pill-amber';
+        }
+      }
+    }
+
+    function handleCallActiveEvent(payload) {
+      if (activeCallState && activeCallState.callId === (payload.callId || payload.id)) {
+        const stateBadge = document.getElementById('callStateBadge');
+        if (stateBadge) {
+          stateBadge.innerText = 'CONNECTED';
+          stateBadge.className = 'pill pill-green';
+        }
+      }
+    }
+
+    function handleCallEndedEvent(payload) {
+      stopIncomingRingLoop();
+      const modal = document.getElementById('incomingCallModal');
+      if (modal) modal.style.display = 'none';
+      incomingCallPending = null;
+
+      if (activeCallState && activeCallState.callId === (payload.callId || payload.id)) {
+        teardownCurrentCallState();
+        loadCallHistory();
+      }
+    }
+
+    // --- SSE Event Subscription ---
+    function initCallingSSE(sessionName) {
+      if (callingEventSource) return;
+      const apiKey = getApiKey();
+      const url = '/api/calling/sessions/' + encodeURIComponent(sessionName) + '/events' +
+        (apiKey ? '?x-api-key=' + encodeURIComponent(apiKey) : '');
+
+      callingEventSource = new EventSource(url);
+      callingEventSource.addEventListener('incoming', function(e) {
+        try { handleIncomingCallEvent(JSON.parse(e.data)); } catch (err) {}
+      });
+      callingEventSource.addEventListener('call-ringing', function(e) {
+        try { handleCallRingingEvent(JSON.parse(e.data)); } catch (err) {}
+      });
+      callingEventSource.addEventListener('call-active', function(e) {
+        try { handleCallActiveEvent(JSON.parse(e.data)); } catch (err) {}
+      });
+      callingEventSource.addEventListener('call-ended', function(e) {
+        try { handleCallEndedEvent(JSON.parse(e.data)); } catch (err) {}
+      });
+      callingEventSource.onerror = function() {};
+    }
+
+    // --- Call History ---
+    async function loadCallHistory() {
+      const container = document.getElementById('callHistoryContainer');
+      if (!container) return;
+      try {
+        const apiKey = getApiKey();
+        const headers = { 'Accept': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+        const res = await fetch('/api/calling/sessions/' + encodeURIComponent(currentCallingSession) + '/history', { headers: headers });
+        if (!res.ok) {
+          container.innerHTML = '<div class="text-sm text-muted" style="padding: 12px 0;">History unavailable.</div>';
+          return;
+        }
+        const data = await res.json();
+        const rows = data.rows || [];
+        if (rows.length === 0) {
+          container.innerHTML = '<div class="text-sm text-muted" style="padding: 12px 0;">No past calls yet.</div>';
+          return;
+        }
+
+        let html = '<table class="log-table"><thead><tr><th>Type</th><th>Peer Number</th><th>Started</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          const isInbound = r.direction === 'inbound';
+          const dirPill = '<span class="pill ' + (isInbound ? 'pill-blue' : 'pill-green') + '">' +
+            (isInbound ? '↙ Inbound' : '↗ Outbound') + '</span>';
+          const timeStr = r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : '-';
+          html += '<tr>' +
+            '<td>' + dirPill + '</td>' +
+            '<td><b>' + (r.peer || '-') + '</b></td>' +
+            '<td class="text-xs text-muted">' + timeStr + '</td>' +
+            '<td><span class="pill pill-dim">' + (r.status || 'ended') + '</span></td>' +
+            '<td><button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="quickRedial(&quot;' + (r.peer || '') + '&quot;)">📞 Call</button></td>' +
+            '</tr>';
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = '<div class="text-sm text-muted" style="padding: 12px 0;">Failed to load call history.</div>';
+      }
+    }
+
+    function quickRedial(phone) {
+      const input = document.getElementById('callingPhoneInput');
+      if (input) {
+        input.value = phone;
+        dialCall();
+      }
+    }
+
+    function updateCallingSessionStatus(sessions) {
+      if (!sessions || !sessions.length) return;
+      const primary = sessions.find(function(s) { return s.status === 'WORKING'; }) || sessions[0];
+      if (primary) {
+        currentCallingSession = primary.name;
+        const nameEl = document.getElementById('callingActiveSessionName');
+        const badgeEl = document.getElementById('callingPairedBadge');
+        if (nameEl) nameEl.innerText = primary.name + (primary.me && primary.me.phone ? ' (+' + primary.me.phone + ')' : '');
+        if (badgeEl) {
+          const isWorking = primary.status === 'WORKING';
+          badgeEl.innerText = isWorking ? 'CONNECTED' : primary.status;
+          badgeEl.className = 'pill ' + (isWorking ? 'pill-green' : 'pill-amber');
+        }
+        initCallingSSE(currentCallingSession);
+      }
+    }
+
+    function initCallingTab() {
+      loadAudioDevices();
+      loadCallHistory();
+      if (globalStats && globalStats.sessions) {
+        updateCallingSessionStatus(globalStats.sessions);
+      }
     }
 
     async function fetchStats() {
@@ -974,6 +1939,7 @@ const isTamperProof = crypto.timingSafeEqual(
       renderSessions(data.sessions);
       renderWebhookLogs(wh.recentLogs || []);
       renderMessages(data.messages || []);
+      updateCallingSessionStatus(data.sessions);
     }
 
     function renderSessions(sessions) {

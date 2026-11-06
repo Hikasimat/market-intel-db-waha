@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 
@@ -58,7 +59,7 @@ export function loadConfig(): AppConfig {
   const dashboardAuthEnabled = process.env.WAHA_DASHBOARD_AUTH !== 'false';
 
   // Live WhatsApp Voice Calling (WaCalls integration)
-  const callingEnabled = process.env.CALLING_ENABLED === 'true';
+  const callingEnabled = process.env.CALLING_ENABLED !== 'false';
   // The VoIP engine is bundled in this container and bridged onto the existing Baileys sessions
   // (no separate WhatsApp login / QR). An explicit WACALLS_INTERNAL_URL points at an external engine instead.
   const explicitWacallsUrl = process.env.WACALLS_INTERNAL_URL?.trim() || process.env.WACALLS_URL?.trim() || '';
@@ -69,7 +70,10 @@ export function loadConfig(): AppConfig {
     // Shared secret between this process and the engine child process; regenerated on every start.
     wacallsToken = crypto.randomBytes(24).toString('hex');
   }
-  const wacallsBinary = process.env.WACALLS_BINARY?.trim() || '/usr/local/bin/wacalls';
+  const defaultBinary = process.platform === 'win32'
+    ? path.resolve('wacalls-service/wacalls.exe')
+    : (fs.existsSync(path.resolve('wacalls-service/wacalls')) ? path.resolve('wacalls-service/wacalls') : '/usr/local/bin/wacalls');
+  const wacallsBinary = process.env.WACALLS_BINARY?.trim() || defaultBinary;
 
   return {
     port,

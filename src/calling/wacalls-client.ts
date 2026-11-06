@@ -67,7 +67,7 @@ export class WaCallsClient {
     return { callId: data.call.callId };
   }
 
-  public async exchangeWebRTC(sessionId: string, callId: string, sdpOffer: string): Promise<{ sdpAnswer: string }> {
+  public async exchangeWebRTC(sessionId: string, callId: string, sdpOffer: string): Promise<{ sdpAnswer: string; sdp_answer: string }> {
     const res = await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/calls/${encodeURIComponent(callId)}/webrtc`, {
       method: 'POST',
       headers: this.headers(),
@@ -79,7 +79,7 @@ export class WaCallsClient {
       throw new Error(`Failed to exchange WebRTC SDP: HTTP ${res.status} - ${err}`);
     }
     const data = (await res.json()) as { sdp_answer: string };
-    return { sdpAnswer: data.sdp_answer };
+    return { sdpAnswer: data.sdp_answer, sdp_answer: data.sdp_answer };
   }
 
   public async acceptCall(sessionId: string, callId: string, clientId?: string): Promise<{ callId: string }> {

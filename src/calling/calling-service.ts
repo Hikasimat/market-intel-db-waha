@@ -108,7 +108,7 @@ export class CallingService {
     return await this.client.startOutgoingCall(sess.id, phone, clientId);
   }
 
-  public async exchangeWebRTC(wahaSessionName: string, callId: string, sdpOffer: string): Promise<{ sdpAnswer: string }> {
+  public async exchangeWebRTC(wahaSessionName: string, callId: string, sdpOffer: string): Promise<{ sdpAnswer: string; sdp_answer: string }> {
     const sess = await this.getOrResolveCallingSession(wahaSessionName);
     return await this.client.exchangeWebRTC(sess.id, callId, sdpOffer);
   }

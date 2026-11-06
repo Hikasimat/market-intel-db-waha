@@ -27,6 +27,7 @@ const FORWARDED_CALL_TAGS = new Set([
   'terminate',
   'reject',
   'relaylatency',
+  'interim',
   'mute_v2',
 ]);
 
@@ -115,6 +116,15 @@ export class CallingBridge {
         (sock.ws as any).on('CB:ack,class:call', (node: BinaryNode) => this.forwardCallAck(wahaSession, node));
         // Receipt events that confirm call acceptance from a linked device or the recipient.
         (sock.ws as any).on('CB:receipt', (node: BinaryNode) => this.forwardReceiptNode(wahaSession, node));
+
+        // Fallback listener for Baileys high-level call events (e.g. timeout, terminate, accept)
+        sock.ev.on('call', (calls) => {
+          for (const c of calls) {
+            logger.info(
+              `[CALL][${wahaSession}] Baileys ev.call event received: status=${c.status} call-id=${c.id} from=${c.from}`
+            );
+          }
+        });
       }
 
       // The engine may still be starting; retry registration for a short while.
@@ -156,6 +166,7 @@ export class CallingBridge {
           jid: me.id,
           lid: (me as any).lid || '',
           deviceIdentity,
+          token: config.wacallsToken,
         }),
         signal: AbortSignal.timeout(8000),
       });
@@ -191,27 +202,52 @@ export class CallingBridge {
       const sid = this.callingSessionIds.get(wahaSession);
       if (!sid) return;
       const children = Array.isArray(node.content) ? (node.content as BinaryNode[]) : [];
-      const child = children[0];
-      if (!child || !FORWARDED_CALL_TAGS.has(child.tag)) return;
-      const from = node.attrs?.from;
-      if (!from) return;
+      const defaultFrom =
+        node.attrs?.from ||
+        node.attrs?.to ||
+        (children[0]?.attrs?.from as string) ||
+        (children[0]?.attrs?.['call-creator'] as string) ||
+        '';
 
-      logger.debug(
-        `[CALL][${wahaSession}] Forwarding call stanza type=${child.tag} from=${from} ` +
-          `call-id=${child.attrs?.['call-id'] || ''} stanza-id=${node.attrs?.id || ''}`
-      );
+      for (const child of children) {
+        if (!child || typeof child !== 'object') continue;
+        const tag = child.tag;
+        const isCallTag = FORWARDED_CALL_TAGS.has(tag) || child.attrs?.['call-id'] !== undefined;
+        if (!isCallTag) continue;
 
-      fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/events`, {
-        method: 'POST',
-        headers: internalHeaders(),
-        body: JSON.stringify({
-          type: child.tag,
-          from,
-          id: node.attrs?.id || '',
-          data: nodeToJson(child),
-        }),
-        signal: AbortSignal.timeout(8000),
-      }).catch((err) => logger.warn(`[${wahaSession}] Failed to forward call stanza '${child.tag}': ${err.message}`));
+        const from = (child.attrs?.from as string) || defaultFrom;
+        const callId = (child.attrs?.['call-id'] || node.attrs?.['call-id'] || '') as string;
+        const stanzaId = (node.attrs?.id || '') as string;
+
+        logger.info(
+          `[CALL][${wahaSession}] Forwarding call stanza type=${tag} from=${from} ` +
+            `call-id=${callId} stanza-id=${stanzaId}`
+        );
+
+        const childWithAttrs: BinaryNode = {
+          ...child,
+          attrs: {
+            ...(child.attrs || {}),
+            from: from,
+            'call-id': callId,
+          },
+        };
+
+        fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/events`, {
+          method: 'POST',
+          headers: internalHeaders(),
+          body: JSON.stringify({
+            type: tag,
+            from,
+            id: stanzaId,
+            callId,
+            data: nodeToJson(childWithAttrs),
+          }),
+          signal: AbortSignal.timeout(8000),
+        }).catch((err) =>
+          logger.warn(`[${wahaSession}] Failed to forward call stanza '${tag}': ${err.message}`)
+        );
+      }
     } catch (err: any) {
       logger.warn(`[${wahaSession}] Error forwarding call stanza: ${err.message}`);
     }
@@ -292,9 +328,18 @@ export class CallingBridge {
       if (!callChild) return;
       const from = node.attrs?.from || node.attrs?.to || '';
       const stanzaId = node.attrs?.id || '';
+      const callId = (callChild.attrs?.['call-id'] || node.attrs?.['call-id'] || '') as string;
       logger.info(
-        `[CALL][${wahaSession}] Forwarding receipt child=${callChild.tag} from=${from} stanza-id=${stanzaId} call-id=${callChild.attrs?.['call-id'] || ''}`
+        `[CALL][${wahaSession}] Forwarding receipt child=${callChild.tag} from=${from} stanza-id=${stanzaId} call-id=${callId}`
       );
+      const childWithAttrs: BinaryNode = {
+        ...callChild,
+        attrs: {
+          ...(callChild.attrs || {}),
+          from: from,
+          'call-id': callId,
+        },
+      };
       fetch(`${config.wacallsUrl.replace(/\/+$/, '')}/api/bridge/sessions/${sid}/events`, {
         method: 'POST',
         headers: internalHeaders(),
@@ -302,7 +347,8 @@ export class CallingBridge {
           type: `receipt:${callChild.tag}`,
           from,
           id: stanzaId,
-          data: nodeToJson(callChild),
+          callId,
+          data: nodeToJson(childWithAttrs),
         }),
         signal: AbortSignal.timeout(8000),
       }).catch((err) =>

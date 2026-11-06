@@ -106,8 +106,6 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		return
 	}
 
-	m.log.Info("[CALL] Recipient accepted call", "call_id", call.CallID, "peer", peerJid.String())
-
 	if signaling.NeedsDecryption(info.Tag) {
 		if peerKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid); err == nil && peerKey != nil {
 			m.mu.Lock()
@@ -128,13 +126,11 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	}
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
 	m.initSrtpKeysLocked()
-	// hasConn is true if relay is currently open; relayPreConnected is true if
-	// relay connected during the ringing phase (before accept arrived).
-	hasConn := m.relay.HasConnection() || m.relayPreConnected
+	hasConn := m.relay.HasConnection()
 	relayData := call.RelayData
 	m.mu.Unlock()
 
-	m.log.Info("[CALL] Remote accept processed", "call_id", call.CallID, "peer", peerJid.String(),
+	m.log.Info("remote accepted call", "call_id", call.CallID, "peer", peerJid.String(),
 		"relay_connected", hasConn, "relay_endpoints", relayEndpointCount(relayData))
 
 	m.relay.ResendSubscriptions()
@@ -168,65 +164,10 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
 			m.emitState()
 			m.startSilenceKeepaliveLocked()
-			m.log.Info("[CALL] Call ACTIVE (media path established)", "call_id", call.CallID, "audio", m.codec != nil)
+			m.log.Info("call ACTIVE (media path established)", "call_id", call.CallID, "audio", m.codec != nil)
 		}
 		m.mu.Unlock()
 	} else if relayData != nil {
-		m.connectRelays(relayData.Endpoints)
-	}
-}
-
-// HandleCallPreaccept processes <preaccept> stanzas from the remote peer.
-// The preaccept stanza indicates the recipient's WhatsApp client is showing the incoming call and ringing.
-// This is the only valid trigger to move the outgoing call to the REMOTE_RINGING state.
-func (m *CallManager) HandleCallPreaccept(ctx context.Context, node *waBinary.Node, peerJid types.JID) {
-	m.mu.Lock()
-	call := m.currentCall
-	m.mu.Unlock()
-	if call == nil {
-		return
-	}
-	info := signaling.ExtractNodeInfo(node)
-	if info == nil {
-		return
-	}
-	callID := info.CallID
-	if call.CallID != callID {
-		m.log.Warn("[CALL] Preaccept for unexpected call", "expected", call.CallID, "got", callID)
-		return
-	}
-
-	m.log.Info("[CALL] Recipient ringing confirmed (preaccept received)", "call_id", callID, "peer", peerJid.String())
-
-	// Inspect if preaccept carries any relay endpoints
-	relays := signaling.ExtractRelayEndpoints(info.InnerNode)
-	var structured *signaling.ParsedRelayAck
-	if len(relays) == 0 {
-		if parsed := signaling.ParseRelayFromAck(info.InnerNode); len(parsed.Relays) > 0 {
-			relays = parsed.Relays
-			structured = &parsed
-		}
-	}
-
-	m.mu.Lock()
-	_ = call.ApplyTransition(Transition{Type: TransitionRemoteRinging})
-	m.emitState()
-
-	if len(relays) > 0 && call.RelayData == nil {
-		rd := &core.RelayData{Endpoints: relays}
-		if structured != nil {
-			rd.ParticipantJids = structured.ParticipantJids
-			rd.UUID = structured.UUID
-			rd.SelfPid = structured.SelfPid
-			rd.PeerPid = structured.PeerPid
-			rd.HbhKey = structured.HbhKey
-		}
-		call.RelayData = rd
-	}
-	relayData := call.RelayData
-	m.mu.Unlock()
-
-	if relayData != nil && !m.relay.HasConnection() {
 		m.connectRelays(relayData.Endpoints)
 	}
 }
@@ -243,7 +184,7 @@ func (m *CallManager) HandleCallTransport(ctx context.Context, node *waBinary.No
 		return
 	}
 	relays := signaling.ExtractRelayEndpoints(info.InnerNode)
-	m.log.Info("[CALL] Call transport received", "call_id", call.CallID,
+	m.log.Info("call transport received", "call_id", call.CallID,
 		"relays", len(relays), "already_connected", m.relay.HasConnection())
 	if len(relays) > 0 && !m.relay.HasConnection() {
 		m.mu.Lock()
@@ -257,29 +198,18 @@ func (m *CallManager) HandleCallTransport(ctx context.Context, node *waBinary.No
 }
 
 func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
-	if node == nil {
-		return
-	}
-	t := wanode.AttrString(node.Attrs, "type")
-	ackID := wanode.AttrString(node.Attrs, "id")
-	m.log.Info("[CALL] Server ACK received", "id", ackID, "type", t, "class", wanode.AttrString(node.Attrs, "class"))
-
-	if t != "offer" {
+	if t := wanode.AttrString(node.Attrs, "type"); t != "offer" {
 		return
 	}
 	if e := wanode.AttrString(node.Attrs, "error"); e != "" {
-		m.log.Error("[CALL] Server ACK error (offer rejected by server)", "id", ackID, "error", e)
-		m.mu.Lock()
-		if m.currentCall != nil {
-			_ = m.currentCall.ApplyTransition(Transition{Type: TransitionTerminated, Reason: core.EndCallReason(e)})
-			m.emitState()
-		}
-		m.mu.Unlock()
-		m.cleanupMedia()
+		m.log.Error("offer ack error", "error", e)
 		return
 	}
 	parsed := signaling.ParseRelayFromAck(node)
-	m.log.Info("[CALL] Server ACK validated", "id", ackID, "relays", len(parsed.Relays), "participants", len(parsed.ParticipantJids))
+	m.log.Info("offer ack received", "relays", len(parsed.Relays), "participants", len(parsed.ParticipantJids))
+	if len(parsed.Relays) == 0 {
+		return
+	}
 
 	m.mu.Lock()
 	call := m.currentCall
@@ -287,15 +217,6 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 		m.mu.Unlock()
 		return
 	}
-	_ = call.ApplyTransition(Transition{Type: TransitionServerAcknowledged})
-	m.emitState()
-
-	if len(parsed.Relays) == 0 {
-		m.mu.Unlock()
-		m.log.Warn("[CALL] Server ACK had no relay endpoints", "id", ackID)
-		return
-	}
-
 	call.RelayData = &core.RelayData{
 		Endpoints:       parsed.Relays,
 		ParticipantJids: parsed.ParticipantJids,
@@ -333,9 +254,7 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 
 	if sendPreaccept {
 		_ = m.sock.SendNode(ctx, signaling.BuildPreacceptStanza(peer, callID, creator))
-		m.log.Info("[CALL] Outgoing preaccept transmitted after server ACK", "call_id", callID, "peer", peer.String())
 	}
-
 	m.connectRelays(endpoints)
 }
 
@@ -347,23 +266,13 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 		return
 	}
 	info := signaling.ExtractNodeInfo(node)
-	reason := core.EndCallReasonDeclined
+	reason := core.EndCallReasonUserEnded
 	if info != nil {
 		if r := wanode.AttrString(info.InnerNode.Attrs, "reason"); r != "" {
 			reason = core.EndCallReason(r)
-		} else if info.Tag == "reject" {
-			reason = core.EndCallReasonDeclined
-		} else if call.IsInitiator() {
-			if call.StateData.State != core.CallStateActive {
-				reason = core.EndCallReasonDeclined
-			} else {
-				reason = core.EndCallReasonCancelled
-			}
-		} else {
-			reason = core.EndCallReasonUserEnded
 		}
 	}
-	m.log.Info("[CALL] Call ended (terminated by peer)", "call_id", call.CallID, "reason", string(reason))
+	m.log.Info("call terminated by peer", "call_id", call.CallID, "reason", string(reason))
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
 	ended := call
 	m.emitState()

@@ -23,32 +23,9 @@ func (m *CallManager) FeedCapturedPCM(data []float32) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	isActive := m.currentCall != nil && m.currentCall.StateData.State == core.CallStateActive
-	ready := isActive && m.codec != nil && m.rtpSession != nil && m.srtpSession != nil && m.relay.HasConnection()
-	if !ready {
-		// Buffer incoming microphone audio so early speech is not dropped while call is connecting/ringing.
-		// Limit preBuffer to 32,000 samples (2 seconds at 16kHz).
-		const maxPreBuffer = 32000
-		if len(m.preBuffer)+len(data) > maxPreBuffer {
-			excess := (len(m.preBuffer) + len(data)) - maxPreBuffer
-			if excess < len(m.preBuffer) {
-				m.preBuffer = m.preBuffer[excess:]
-			} else {
-				m.preBuffer = nil
-			}
-		}
-		m.preBuffer = append(m.preBuffer, data...)
+	if m.codec == nil || m.rtpSession == nil || m.srtpSession == nil || !m.relay.HasConnection() {
 		return
 	}
-
-	var allData []float32
-	if len(m.preBuffer) > 0 {
-		allData = append(m.preBuffer, data...)
-		m.preBuffer = nil
-	} else {
-		allData = data
-	}
-
 	m.lastCaptureAt = time.Now()
 	frameSize := m.codec.FrameSize()
 	if m.encodeBuf == nil {
@@ -57,9 +34,9 @@ func (m *CallManager) FeedCapturedPCM(data []float32) {
 	}
 
 	offset := 0
-	for offset < len(allData) {
-		toCopy := min(len(allData)-offset, frameSize-m.encodeBufPos)
-		copy(m.encodeBuf[m.encodeBufPos:], allData[offset:offset+toCopy])
+	for offset < len(data) {
+		toCopy := min(len(data)-offset, frameSize-m.encodeBufPos)
+		copy(m.encodeBuf[m.encodeBufPos:], data[offset:offset+toCopy])
 		m.encodeBufPos += toCopy
 		offset += toCopy
 		if m.encodeBufPos < frameSize {
@@ -97,15 +74,6 @@ func (m *CallManager) sendOpusFrameLocked(opus []byte) {
 		return
 	}
 	m.relay.Broadcast(srtp)
-
-	m.outAudioPackets++
-	if m.outAudioPackets%100 == 1 {
-		m.log.Info("[CALL] Caller audio transmission active", "packets_sent", m.outAudioPackets)
-	}
-	if !m.bidiLogged && m.inAudioPackets > 0 && m.outAudioPackets > 0 {
-		m.bidiLogged = true
-		m.log.Info("[CALL] Bidirectional media verified", "in_packets", m.inAudioPackets, "out_packets", m.outAudioPackets)
-	}
 }
 
 func (m *CallManager) startSilenceKeepaliveLocked() {
@@ -125,8 +93,7 @@ func (m *CallManager) startSilenceKeepaliveLocked() {
 				return
 			case <-ticker.C:
 				m.mu.Lock()
-				isActive := m.currentCall != nil && m.currentCall.StateData.State == core.CallStateActive
-				ready := isActive && m.codec != nil && m.rtpSession != nil && m.srtpSession != nil && m.relay.HasConnection()
+				ready := m.codec != nil && m.rtpSession != nil && m.srtpSession != nil && m.relay.HasConnection()
 				idle := time.Since(m.lastCaptureAt) > 120*time.Millisecond
 				if ready && idle {
 					if opus, err := m.codec.Encode(silence); err == nil {
@@ -150,7 +117,7 @@ func (m *CallManager) onRelayData(data []byte) {
 		return
 	}
 	pt := data[1] & 0x7f
-	if pt != core.PayloadTypeWhatsAppOpus && pt != 111 {
+	if pt != core.PayloadTypeWhatsAppOpus {
 		return
 	}
 
@@ -174,22 +141,7 @@ func (m *CallManager) onRelayData(data []byte) {
 	}
 	srtp := m.srtpSession
 	codec := m.codec
-
-	m.inAudioPackets++
-	inCount := m.inAudioPackets
-	outCount := m.outAudioPackets
-	shouldLogBidi := !m.bidiLogged && inCount > 0 && outCount > 0
-	if shouldLogBidi {
-		m.bidiLogged = true
-	}
 	m.mu.Unlock()
-
-	if inCount%100 == 1 {
-		m.log.Info("[CALL] Recipient audio reception active", "packets_received", inCount, "ssrc", ssrc)
-	}
-	if shouldLogBidi {
-		m.log.Info("[CALL] Bidirectional media verified", "in_packets", inCount, "out_packets", outCount)
-	}
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {

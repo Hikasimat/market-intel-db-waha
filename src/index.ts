@@ -5,7 +5,6 @@ import { createApp } from './server.js';
 import { sessionManager } from './manager/session-mgr.js';
 import { callingService } from './calling/calling-service.js';
 import { waCallsProcess } from './calling/go-process.js';
-import { audioSocketGateway } from './calling/audio-socket.js';
 
 async function bootstrap() {
   logger.info(`WAHA-NoWeb-Light starting up...`);
@@ -46,14 +45,6 @@ async function bootstrap() {
         logger.warn(`Failed to auto-start session '${config.autoStartSession}': ${err.message}`);
       });
     }
-  });
-
-  // Handle WebSocket upgrade for live two-way browser audio
-  server.on('upgrade', (req, socket, head) => {
-    if (audioSocketGateway.handleUpgrade(req, socket, head)) {
-      return;
-    }
-    socket.destroy();
   });
 
   // Graceful shutdown handling

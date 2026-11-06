@@ -52,10 +52,18 @@ export class WaCallsProcess {
     }
 
     const args = ['-addr', listen, '-bridge-url', `http://127.0.0.1:${config.port}`];
+    if (config.wacallsToken) {
+      args.push('-api-key', config.wacallsToken);
+    }
     logger.info(`Starting calling engine: ${config.wacallsBinary} ${args.join(' ')}`);
 
     const child = spawn(config.wacallsBinary, args, {
-      env: { ...process.env, WACALLS_INTERNAL_TOKEN: config.wacallsToken },
+      env: {
+        ...process.env,
+        WACALLS_INTERNAL_TOKEN: config.wacallsToken,
+        WACALLS_TOKEN: config.wacallsToken,
+        WACALLS_API_KEY: config.wacallsToken,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.child = child;

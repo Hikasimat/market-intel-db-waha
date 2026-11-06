@@ -128,6 +128,10 @@ callingRouter.post('/api/calling/sessions/:session/calls', async (req: Request, 
 callingRouter.post('/api/calling/sessions/:session/calls/:callId/accept', async (req: Request, res: Response) => {
   try {
     const { session, callId } = req.params;
+    if (!callId || callId === 'undefined') {
+      res.status(400).json({ error: 'Valid callId is required' });
+      return;
+    }
     const clientId = (req.headers['x-client-id'] as string) || req.query.clientId as string | undefined;
     const result = await callingService.accept(session, callId, clientId);
     res.json({
@@ -143,6 +147,10 @@ callingRouter.post('/api/calling/sessions/:session/calls/:callId/accept', async 
 callingRouter.post('/api/calling/sessions/:session/calls/:callId/reject', async (req: Request, res: Response) => {
   try {
     const { session, callId } = req.params;
+    if (!callId || callId === 'undefined') {
+      res.status(400).json({ error: 'Valid callId is required' });
+      return;
+    }
     await callingService.reject(session, callId);
     res.json({ status: 'rejected', callId });
   } catch (err: any) {
@@ -154,6 +162,10 @@ callingRouter.post('/api/calling/sessions/:session/calls/:callId/reject', async 
 callingRouter.post('/api/calling/sessions/:session/calls/:callId/webrtc', async (req: Request, res: Response) => {
   try {
     const { session, callId } = req.params;
+    if (!callId || callId === 'undefined') {
+      res.status(400).json({ error: 'Valid callId is required' });
+      return;
+    }
     const { sdp_offer } = req.body || {};
     if (!sdp_offer || typeof sdp_offer !== 'string') {
       res.status(400).json({ error: 'sdp_offer string is required in request body.' });
@@ -170,6 +182,10 @@ callingRouter.post('/api/calling/sessions/:session/calls/:callId/webrtc', async 
 callingRouter.delete('/api/calling/sessions/:session/calls/:callId', async (req: Request, res: Response) => {
   try {
     const { session, callId } = req.params;
+    if (!callId || callId === 'undefined') {
+      res.status(400).json({ error: 'Valid callId is required' });
+      return;
+    }
     await callingService.hangup(session, callId);
     res.json({ status: 'ended', callId });
   } catch (err: any) {

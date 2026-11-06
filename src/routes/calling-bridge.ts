@@ -26,7 +26,8 @@ callingBridgeRouter.post('/internal/bridge/rpc', async (req: Request, res: Respo
     res.status(503).json({ error: 'Calling subsystem disabled' });
     return;
   }
-  if (req.headers['x-forwarded-for'] || !tokenMatches(req.header('x-internal-token'))) {
+  const providedToken = req.header('x-internal-token') || req.header('authorization')?.replace(/^Bearer\s+/i, '');
+  if (!tokenMatches(providedToken)) {
     res.status(403).json({ error: 'forbidden' });
     return;
   }
