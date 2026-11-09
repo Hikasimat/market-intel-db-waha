@@ -34,6 +34,7 @@ type CallManager struct {
 	initialTransportSent  bool
 	outgoingPreacceptSent bool
 	acceptedByJid         string
+	peerCallKey           []byte
 	debeEnabled           bool
 
 	encodeBuf    []float32
@@ -97,6 +98,9 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	callKey := media.GenerateCallKey()
 	call.EncryptionKey = callKey
 	m.currentCall = call
+	m.peerCallKey = nil
+	m.acceptedByJid = ""
+	m.actualPeerSet = false
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
 

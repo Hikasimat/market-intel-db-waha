@@ -27,10 +27,15 @@ func (m *CallManager) initSrtpKeysLocked() {
 			rawPeer = p
 		}
 	}
-	peerDeviceJid := ensureDeviceJid(rawPeer)
+	peerDeviceJid := ensureDeviceJid(findPeerDevice(participants, wanode.CleanJID(rawPeer), rawPeer))
 
 	sendKM, err1 := media.DerivePerJidSrtpKey(call.EncryptionKey, ourDeviceJid)
-	recvKM, err2 := media.DerivePerJidSrtpKey(call.EncryptionKey, peerDeviceJid)
+
+	recvKey := call.EncryptionKey
+	if len(m.peerCallKey) == 32 {
+		recvKey = m.peerCallKey
+	}
+	recvKM, err2 := media.DerivePerJidSrtpKey(recvKey, peerDeviceJid)
 	if err1 != nil || err2 != nil {
 		m.log.Error("srtp key derivation failed", "err1", err1, "err2", err2)
 		return
@@ -41,27 +46,16 @@ func (m *CallManager) initSrtpKeysLocked() {
 		return
 	}
 	m.srtpSession = sess
-	m.log.Debug("srtp per-jid keys set", "send", ourDeviceJid, "recv", peerDeviceJid)
+	m.log.Info("srtp per-jid keys set", "send", ourDeviceJid, "recv", peerDeviceJid, "using_peer_key", len(m.peerCallKey) == 32)
 }
 
 func (m *CallManager) reinitSrtpLocked(peerKey []byte, peerJid types.JID) {
-	call := m.currentCall
-	if call == nil || call.EncryptionKey == nil {
-		return
+	if len(peerKey) == 32 {
+		m.peerCallKey = make([]byte, 32)
+		copy(m.peerCallKey, peerKey)
 	}
-	ourBase := wanode.CleanJID(m.ownCredJid())
-	var participants []string
-	if call.RelayData != nil {
-		participants = call.RelayData.ParticipantJids
+	if peerJid.String() != "" {
+		m.acceptedByJid = peerJid.String()
 	}
-	ourDeviceJid := ensureDeviceJid(findOurDevice(participants, ourBase, m.ownCredJid()))
-	sendKM, err1 := media.DerivePerJidSrtpKey(call.EncryptionKey, ourDeviceJid)
-	recvKM, err2 := media.DerivePerJidSrtpKey(peerKey, peerJid.String())
-	if err1 != nil || err2 != nil {
-		return
-	}
-	if sess, err := media.NewSrtpSession(sendKM, recvKM, core.SRTPSendAuthTagLen, core.SRTPRecvAuthTagLen); err == nil {
-		m.srtpSession = sess
-		m.log.Debug("srtp re-initialized with peer call key")
-	}
+	m.initSrtpKeysLocked()
 }

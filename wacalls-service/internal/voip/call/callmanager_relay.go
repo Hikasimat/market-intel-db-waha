@@ -89,6 +89,8 @@ func (m *CallManager) cleanupMedia() {
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
 	m.actualPeerSet = false
+	m.peerCallKey = nil
+	m.acceptedByJid = ""
 	m.encodeBuf = nil
 	m.encodeBufPos = 0
 	m.mu.Unlock()

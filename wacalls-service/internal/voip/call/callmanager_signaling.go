@@ -107,11 +107,14 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	}
 
 	if signaling.NeedsDecryption(info.Tag) {
-		if peerKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid); err == nil && peerKey != nil {
+		peerKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid)
+		if err != nil {
+			m.log.Warn("decrypt peer call key in accept failed", "err", err, "peer", peerJid.String())
+		} else if peerKey != nil {
 			m.mu.Lock()
-			if call.EncryptionKey != nil && !equalBytes(call.EncryptionKey, peerKey) {
-				m.reinitSrtpLocked(peerKey, peerJid)
-			}
+			m.peerCallKey = peerKey
+			m.log.Info("peer call key decrypted successfully", "len", len(peerKey), "peer", peerJid.String())
+			m.reinitSrtpLocked(peerKey, peerJid)
 			m.mu.Unlock()
 		}
 	}
@@ -121,7 +124,15 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	m.emitState()
 	m.acceptedByJid = peerJid.String()
 	if m.peerSsrcs == nil || !m.actualPeerSet {
-		peerDeviceJid := ensureDeviceJid(peerJid.String())
+		var participants []string
+		if call.RelayData != nil {
+			participants = call.RelayData.ParticipantJids
+		}
+		rawPeer := m.acceptedByJid
+		if rawPeer == "" {
+			rawPeer = call.PeerJid
+		}
+		peerDeviceJid := ensureDeviceJid(findPeerDevice(participants, wanode.CleanJID(rawPeer), rawPeer))
 		m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
 	}
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))

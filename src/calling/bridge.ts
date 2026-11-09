@@ -207,8 +207,10 @@ export class CallingBridge {
       if (!sid) return;
       const children = Array.isArray(node.content) ? (node.content as BinaryNode[]) : [];
       const defaultFrom =
+        (node.attrs?.participant as string) ||
         node.attrs?.from ||
         node.attrs?.to ||
+        (children[0]?.attrs?.participant as string) ||
         (children[0]?.attrs?.from as string) ||
         (children[0]?.attrs?.['call-creator'] as string) ||
         '';
@@ -219,7 +221,10 @@ export class CallingBridge {
         const isCallTag = FORWARDED_CALL_TAGS.has(tag) || child.attrs?.['call-id'] !== undefined;
         if (!isCallTag) continue;
 
-        const from = (child.attrs?.from as string) || defaultFrom;
+        const from =
+          (child.attrs?.participant as string) ||
+          (child.attrs?.from as string) ||
+          defaultFrom;
         const callId = (child.attrs?.['call-id'] || node.attrs?.['call-id'] || '') as string;
         const stanzaId = (node.attrs?.id || '') as string;
 
@@ -432,13 +437,33 @@ export class CallingBridge {
       }
       case 'decryptCallKey': {
         const ciphertext = Buffer.from(params.ciphertext, 'base64');
-        const decrypted = await sock.signalRepository.decryptMessage({
-          jid: params.from,
-          type: params.type === 'pkmsg' ? 'pkmsg' : 'msg',
-          ciphertext,
-        });
-        const plaintext = unpadRandomMax16(decrypted);
-        return { plaintext: Buffer.from(plaintext).toString('base64') };
+        const type = params.type === 'pkmsg' ? 'pkmsg' : 'msg';
+
+        const candidateJids: string[] = [];
+        if (params.from) {
+          candidateJids.push(params.from);
+          if (params.from.includes(':')) {
+            candidateJids.push(params.from.replace(/:[0-9]+@/, '@'));
+          } else {
+            candidateJids.push(params.from.replace('@', ':0@'));
+          }
+        }
+
+        let lastErr: any = null;
+        for (const jid of candidateJids) {
+          try {
+            const decrypted = await sock.signalRepository.decryptMessage({
+              jid,
+              type,
+              ciphertext,
+            });
+            const plaintext = unpadRandomMax16(decrypted);
+            return { plaintext: Buffer.from(plaintext).toString('base64') };
+          } catch (err: any) {
+            lastErr = err;
+          }
+        }
+        throw lastErr || new Error('Decryption failed for all candidate JIDs');
       }
       case 'resolveLID': {
         const pn = params.pn;

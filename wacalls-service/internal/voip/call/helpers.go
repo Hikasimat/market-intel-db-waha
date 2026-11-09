@@ -45,6 +45,23 @@ func firstPeerDevice(participants []string, ourBase string) string {
 	return ""
 }
 
+func findPeerDevice(participants []string, peerBase, fallback string) string {
+	for _, jid := range participants {
+		if wanode.CleanJID(jid) == peerBase && strings.Contains(jid, ":") {
+			return jid
+		}
+	}
+	if strings.Contains(fallback, ":") {
+		return fallback
+	}
+	for _, jid := range participants {
+		if wanode.CleanJID(jid) != wanode.CleanJID(fallback) && strings.Contains(jid, ":") {
+			return jid
+		}
+	}
+	return fallback
+}
+
 func firstSsrc(s []uint32) uint32 {
 	if len(s) > 0 {
 		return s[0]
