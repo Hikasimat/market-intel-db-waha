@@ -22,6 +22,8 @@ export class WaCallsEventConsumer extends EventEmitter {
   private callStartTimes: Map<string, number> = new Map();
   // CallId -> Direction ('inbound' | 'outbound')
   private callDirections: Map<string, 'inbound' | 'outbound'> = new Map();
+  // CallId -> Peer JID
+  private callPeers: Map<string, string> = new Map();
   // SessionId -> SessionName reverse mapping
   private sessionNameMap: Map<string, string> = new Map();
 
@@ -32,11 +34,29 @@ export class WaCallsEventConsumer extends EventEmitter {
   }
 
   public registerSessionMapping(sessionId: string, sessionName: string) {
+    if (!sessionId || !sessionName) return;
     this.sessionNameMap.set(sessionId, sessionName);
+    this.sessionNameMap.set(sessionName, sessionName);
+    if (!sessionId.startsWith('calling_')) {
+      this.sessionNameMap.set(`calling_${sessionId}`, sessionName);
+    }
   }
 
   public getSessionName(sessionId: string): string {
-    return this.sessionNameMap.get(sessionId) || sessionId;
+    if (!sessionId) return 'default';
+    if (this.sessionNameMap.has(sessionId)) {
+      return this.sessionNameMap.get(sessionId)!;
+    }
+    if (sessionId.startsWith('calling_')) {
+      const stripped = sessionId.slice(8);
+      return this.sessionNameMap.get(stripped) || stripped;
+    }
+    for (const [key, name] of this.sessionNameMap.entries()) {
+      if (key === sessionId || key.endsWith(sessionId) || sessionId.endsWith(key)) {
+        return name;
+      }
+    }
+    return sessionId;
   }
 
   public getCachedQR(sessionId: string): string | null {
@@ -101,6 +121,29 @@ export class WaCallsEventConsumer extends EventEmitter {
         this.reconnectAttempts = 0;
         logger.info('Connected to WaCalls SSE stream');
         this.emit('connected');
+
+        fetch(`${this.baseUrl}/api/sessions`, {
+          headers: this.internalToken
+            ? {
+                'X-Internal-Token': this.internalToken,
+                Authorization: `Bearer ${this.internalToken}`,
+              }
+            : {},
+          signal: AbortSignal.timeout(3000),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data: any) => {
+            if (data && Array.isArray(data.sessions)) {
+              for (const s of data.sessions) {
+                if (s?.id && s?.name) {
+                  const cleanName = s.name.replace(/^calling_/, '');
+                  this.registerSessionMapping(s.id, cleanName);
+                  this.registerSessionMapping(s.name, cleanName);
+                }
+              }
+            }
+          })
+          .catch(() => {});
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder('utf-8');
@@ -169,21 +212,47 @@ export class WaCallsEventConsumer extends EventEmitter {
 
         case 'incoming': {
           const sessionName = this.getSessionName(event.sessionId);
-          this.callStartTimes.set(event.id, event.offeredAt || Date.now());
+          const offeredAt = event.offeredAt || Date.now();
+          this.callStartTimes.set(event.id, offeredAt);
           this.callDirections.set(event.id, 'inbound');
+          if (event.peer) {
+            this.callPeers.set(event.id, event.peer);
+          }
 
-          const payload: VoiceCallWebhookPayload = {
+          const cleanPhone = (event.peer || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+          const callerJid = event.peer?.includes('@') ? event.peer : (cleanPhone ? `${cleanPhone}@s.whatsapp.net` : '');
+          const callDate = new Date(offeredAt);
+
+          const basePayload = {
+            id: event.id,
             callId: event.id,
+            from: callerJid,
+            chatId: callerJid,
+            peer: event.peer || callerJid,
+            caller: cleanPhone || event.peer,
+            callerPhone: cleanPhone || event.peer,
+            direction: 'inbound' as const,
+            session: sessionName,
             sessionId: event.sessionId,
-            peer: event.peer,
-            direction: 'inbound',
-            status: 'incoming',
-            startedAt: event.offeredAt || Date.now(),
+            timestamp: callDate.getTime(),
+            date: callDate.toISOString(),
+            startedAt: callDate.getTime(),
+            isVideo: false,
+            isGroup: false,
+            groupJid: null,
+            offline: false,
           };
 
+          const wahaPayload: VoiceCallWebhookPayload = { ...basePayload, status: 'offer' };
+          const voicePayload: VoiceCallWebhookPayload = { ...basePayload, status: 'incoming' };
+
           logger.info({ session: sessionName, callId: event.id, peer: event.peer }, 'Incoming live voice call detected');
-          this.emit('incoming', { sessionName, payload });
-          webhookDispatcher.dispatch('call.voice.incoming', sessionName, payload);
+          this.emit('incoming', { sessionName, payload: voicePayload });
+          this.emit('call.received', { sessionName, payload: wahaPayload });
+
+          // Dispatch standard WAHA incoming call webhook and voice incoming webhook
+          webhookDispatcher.dispatch('call.received', sessionName, wahaPayload);
+          webhookDispatcher.dispatch('call.voice.incoming', sessionName, voicePayload);
           break;
         }
 
@@ -191,30 +260,52 @@ export class WaCallsEventConsumer extends EventEmitter {
           const sessionName = this.getSessionName(event.sessionId);
           const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(event.id) || (event.owner ? 'outbound' : 'outbound');
           this.callDirections.set(event.id, dir);
+          if (event.peer) {
+            this.callPeers.set(event.id, event.peer);
+          }
+
+          const peer = event.peer || this.callPeers.get(event.id) || '';
+          const cleanPhone = peer.split('@')[0].split(':')[0].replace(/\D/g, '');
+          const callerJid = peer.includes('@') ? peer : (cleanPhone ? `${cleanPhone}@s.whatsapp.net` : '');
+          const now = Date.now();
+          const startedAt = event.startedAt || this.callStartTimes.get(event.id) || now;
+
+          const basePayload = {
+            id: event.id,
+            callId: event.id,
+            from: callerJid,
+            chatId: callerJid,
+            peer,
+            caller: cleanPhone || peer,
+            callerPhone: cleanPhone || peer,
+            direction: dir,
+            session: sessionName,
+            sessionId: event.sessionId,
+            timestamp: now,
+            date: new Date(now).toISOString(),
+            startedAt,
+            isVideo: false,
+            isGroup: false,
+            groupJid: null,
+            offline: false,
+          };
 
           if (event.status === 'ringing') {
             const payload: VoiceCallWebhookPayload = {
-              callId: event.id,
-              sessionId: event.sessionId,
-              peer: event.peer,
-              direction: dir,
+              ...basePayload,
               status: 'ringing',
-              startedAt: event.startedAt || Date.now(),
             };
             this.emit('call-ringing', { sessionName, payload });
+            webhookDispatcher.dispatch('call.ringing', sessionName, payload);
             webhookDispatcher.dispatch('call.voice.ringing', sessionName, payload);
           } else if (event.status === 'connected') {
-            const payload: VoiceCallWebhookPayload = {
-              callId: event.id,
-              sessionId: event.sessionId,
-              peer: event.peer,
-              direction: dir,
-              status: 'active',
-              startedAt: event.startedAt || Date.now(),
-            };
+            const wahaPayload: VoiceCallWebhookPayload = { ...basePayload, status: 'accept' };
+            const voicePayload: VoiceCallWebhookPayload = { ...basePayload, status: 'active' };
+
             logger.info({ session: sessionName, callId: event.id }, 'Voice call reached ACTIVE media state');
-            this.emit('call-active', { sessionName, payload });
-            webhookDispatcher.dispatch('call.voice.active', sessionName, payload);
+            this.emit('call-active', { sessionName, payload: voicePayload });
+            webhookDispatcher.dispatch('call.accepted', sessionName, wahaPayload);
+            webhookDispatcher.dispatch('call.voice.active', sessionName, voicePayload);
           }
           break;
         }
@@ -228,25 +319,53 @@ export class WaCallsEventConsumer extends EventEmitter {
           const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(event.id) || (event.owner ? 'outbound' : 'outbound');
           this.callDirections.delete(event.id);
 
-          const payload: VoiceCallWebhookPayload = {
+          const peer = event.peer || this.callPeers.get(event.id) || '';
+          this.callPeers.delete(event.id);
+          const cleanPhone = peer.split('@')[0].split(':')[0].replace(/\D/g, '');
+          const callerJid = peer.includes('@') ? peer : (cleanPhone ? `${cleanPhone}@s.whatsapp.net` : '');
+
+          const isRejected = event.reason === 'declined' || event.reason === 'rejected';
+          const isMissed = event.reason === 'timeout' || event.reason === 'missed';
+          const standardStatus = isRejected ? 'reject' : (isMissed ? 'timeout' : 'terminate');
+
+          const basePayload = {
+            id: event.id,
             callId: event.id,
-            sessionId: event.sessionId,
-            peer: event.peer || '',
+            from: callerJid,
+            chatId: callerJid,
+            peer,
+            caller: cleanPhone || peer,
+            callerPhone: cleanPhone || peer,
             direction: dir,
-            status: 'ended',
+            session: sessionName,
+            sessionId: event.sessionId,
+            timestamp: endedAt,
+            date: new Date(endedAt).toISOString(),
             startedAt,
             endedAt,
             durationMs,
             reason: event.reason,
+            isVideo: false,
+            isGroup: false,
+            groupJid: null,
+            offline: false,
           };
 
-          logger.info({ session: sessionName, callId: event.id, reason: event.reason, durationMs }, 'Voice call ended');
-          this.emit('call-ended', { sessionName, payload });
+          const wahaPayload: VoiceCallWebhookPayload = { ...basePayload, status: standardStatus };
+          const voicePayload: VoiceCallWebhookPayload = { ...basePayload, status: 'ended' };
 
-          if (event.reason === 'declined' || event.reason === 'rejected') {
-            webhookDispatcher.dispatch('call.voice.rejected', sessionName, payload);
+          logger.info({ session: sessionName, callId: event.id, reason: event.reason, durationMs }, 'Voice call ended');
+          this.emit('call-ended', { sessionName, payload: voicePayload });
+
+          if (isRejected) {
+            webhookDispatcher.dispatch('call.rejected', sessionName, wahaPayload);
+            webhookDispatcher.dispatch('call.voice.rejected', sessionName, voicePayload);
+          } else if (isMissed) {
+            webhookDispatcher.dispatch('call.missed', sessionName, wahaPayload);
+            webhookDispatcher.dispatch('call.voice.missed', sessionName, voicePayload);
           }
-          webhookDispatcher.dispatch('call.voice.ended', sessionName, payload);
+          webhookDispatcher.dispatch('call.ended', sessionName, wahaPayload);
+          webhookDispatcher.dispatch('call.voice.ended', sessionName, voicePayload);
           break;
         }
       }

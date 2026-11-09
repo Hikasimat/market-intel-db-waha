@@ -75,6 +75,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/calls/{call_id}/reject", s.handleRejectCall)
 	mux.HandleFunc("POST /api/v1/calls/{call_id}/hangup", s.handleHangupCall)
 	mux.HandleFunc("POST /api/v1/calls/{call_id}/webrtc", s.handleWebRTC)
+	mux.HandleFunc("GET /api/v1/calls/{call_id}/socket", s.handleCallSocket)
 
 	// v1 REST API: Events & History
 	mux.HandleFunc("GET /api/v1/events", s.handleEvents)
@@ -88,6 +89,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/pair", s.handleConnectSession)
 	mux.HandleFunc("POST /api/sessions/{id}/calls", s.handleStartCall)
 	mux.HandleFunc("POST /api/sessions/{id}/calls/{call_id}/webrtc", s.handleWebRTC)
+	mux.HandleFunc("GET /api/sessions/{id}/calls/{call_id}/socket", s.handleCallSocket)
 	mux.HandleFunc("POST /api/sessions/{id}/calls/{call_id}/accept", s.handleAcceptCall)
 	mux.HandleFunc("POST /api/sessions/{id}/calls/{call_id}/reject", s.handleRejectCall)
 	mux.HandleFunc("DELETE /api/sessions/{id}/calls/{call_id}", s.handleHangupCall)

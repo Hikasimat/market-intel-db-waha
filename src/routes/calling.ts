@@ -47,17 +47,24 @@ callingRouter.get('/api/calling/sessions/:session/events', (req: Request, res: R
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
+  const matchesSession = (sName: string) => {
+    if (!sName || !sessionName) return true;
+    if (sName === sessionName) return true;
+    const resolved = waCallsEvents.getSessionName(sName);
+    return resolved === sessionName;
+  };
+
   const onRinging = ({ sessionName: sName, payload }: any) => {
-    if (sName === sessionName || !sName) sendEvent('call-ringing', payload);
+    if (matchesSession(sName)) sendEvent('call-ringing', payload);
   };
   const onActive = ({ sessionName: sName, payload }: any) => {
-    if (sName === sessionName || !sName) sendEvent('call-active', payload);
+    if (matchesSession(sName)) sendEvent('call-active', payload);
   };
   const onEnded = ({ sessionName: sName, payload }: any) => {
-    if (sName === sessionName || !sName) sendEvent('call-ended', payload);
+    if (matchesSession(sName)) sendEvent('call-ended', payload);
   };
   const onIncoming = ({ sessionName: sName, payload }: any) => {
-    if (sName === sessionName || !sName) sendEvent('incoming', payload);
+    if (matchesSession(sName)) sendEvent('incoming', payload);
   };
 
   waCallsEvents.on('call-ringing', onRinging);

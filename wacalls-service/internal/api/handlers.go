@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -11,7 +12,9 @@ import (
 	"wacalls/internal/core"
 	"wacalls/internal/providers/bridge"
 	"wacalls/internal/session"
+	"wacalls/internal/webrtc"
 
+	"github.com/coder/websocket"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -324,6 +327,36 @@ func (s *Server) handleWebRTC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"sdp_answer": answer})
+}
+
+func (s *Server) handleCallSocket(w http.ResponseWriter, r *http.Request) {
+	sID, cID := callAndSessionIDs(r)
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+		OriginPatterns:     []string{"*"},
+	})
+	if err != nil {
+		slog.Error("audio websocket accept error", "err", err)
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	wsBridge := webrtc.NewWSBridge(conn, slog.Default())
+	wsBridge.OnBrowserPCM = func(pcm []float32) {
+		s.engine.FeedCallPCM(cID, pcm)
+	}
+
+	if err := s.engine.AttachSocketBridge(r.Context(), tenantID(r), sID, cID, wsBridge); err != nil {
+		slog.Warn("failed to attach socket bridge", "call_id", cID, "err", err)
+		_ = conn.Close(websocket.StatusPolicyViolation, "call not found")
+		return
+	}
+	defer s.engine.DetachBridge(cID, wsBridge)
+
+	slog.Info("audio websocket connected", "session", sID, "call_id", cID)
+	wsBridge.Run(r.Context())
+	slog.Info("audio websocket disconnected", "session", sID, "call_id", cID)
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

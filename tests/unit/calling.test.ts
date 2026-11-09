@@ -86,9 +86,29 @@ describe('WhatsApp Live Voice Calling Subsystem', () => {
           status: 'incoming',
         })
       );
+
+      // Verify standard WAHA incoming call webhook
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        'call.received',
+        'user_16',
+        expect.objectContaining({
+          id: 'call_999',
+          callId: 'call_999',
+          from: '1234567890@s.whatsapp.net',
+          chatId: '1234567890@s.whatsapp.net',
+          caller: '1234567890',
+          callerPhone: '1234567890',
+          peer: '1234567890@s.whatsapp.net',
+          direction: 'inbound',
+          status: 'offer',
+          session: 'user_16',
+          isVideo: false,
+          isGroup: false,
+        })
+      );
     });
 
-    it('should map call-status connected event to call.voice.active webhook', () => {
+    it('should map call-status connected event to call.voice.active webhook and call.accepted', () => {
       const dispatchSpy = vi.spyOn(webhookDispatcher, 'dispatch').mockImplementation(() => {});
 
       (consumer as any).handleRawEvent(
@@ -110,6 +130,22 @@ describe('WhatsApp Live Voice Calling Subsystem', () => {
           status: 'active',
         })
       );
+
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        'call.accepted',
+        'user_16',
+        expect.objectContaining({
+          id: 'call_999',
+          status: 'accept',
+        })
+      );
+    });
+
+    it('should resolve session name from internal engine IDs and calling_ prefixes', () => {
+      consumer.registerSessionMapping('64f868ac7926e7b5c88aa3f8f4676403', 'user_16');
+      expect(consumer.getSessionName('64f868ac7926e7b5c88aa3f8f4676403')).toBe('user_16');
+      expect(consumer.getSessionName('calling_user_16')).toBe('user_16');
+      expect(consumer.getSessionName('user_16')).toBe('user_16');
     });
 
     it('should map call-ended event to call.voice.ended webhook with duration', () => {

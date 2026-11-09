@@ -1439,30 +1439,59 @@ const isTamperProof = crypto.timingSafeEqual(
           audio: selectedMicId ? { deviceId: { exact: selectedMicId } } : true,
         });
 
-        const pc = new RTCPeerConnection({ iceServers: [] });
-        const dc = pc.createDataChannel('pcm', { ordered: true });
-        dc.binaryType = 'arraybuffer';
-
         const ctx = new AudioContext({ sampleRate: 16000 });
         await ctx.audioWorklet.addModule('/worklets/capture-processor.js');
         await ctx.audioWorklet.addModule('/worklets/playback-processor.js');
         await ctx.resume();
 
+        const apiKey = getApiKey();
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const queryKey = apiKey ? '?x-api-key=' + encodeURIComponent(apiKey) : '';
+        const wsUrl = wsProto + '//' + location.host + '/api/calling/sessions/' + encodeURIComponent(sessionName) + '/calls/' + encodeURIComponent(callId) + '/socket' + queryKey;
+
+        console.log('Connecting resilient WebSocket audio stream:', wsUrl);
+        const audioWs = new WebSocket(wsUrl);
+        audioWs.binaryType = 'arraybuffer';
+
+        let pc = null;
+        let dc = null;
+
         const micSource = ctx.createMediaStreamSource(micStream);
         const captureNode = new AudioWorkletNode(ctx, 'capture-processor');
         captureNode.port.onmessage = function(e) {
-          if (dc.readyState === 'open') {
-            dc.send(float32ToInt16LE(e.data));
+          const pcmData = float32ToInt16LE(e.data);
+          if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+            audioWs.send(pcmData);
+          }
+          if (dc && dc.readyState === 'open') {
+            dc.send(pcmData);
           }
         };
         micSource.connect(captureNode);
-        captureNode.connect(ctx.destination);
+
+        // Route mic through a zero-gain node so local voice does not echo in speakers
+        const silenceGain = ctx.createGain();
+        silenceGain.gain.value = 0;
+        captureNode.connect(silenceGain);
+        silenceGain.connect(ctx.destination);
 
         const playbackNode = new AudioWorkletNode(ctx, 'playback-processor');
+        // Route incoming peer voice directly to speakers
+        playbackNode.connect(ctx.destination);
+
         const streamDest = ctx.createMediaStreamDestination();
         playbackNode.connect(streamDest);
-        dc.onmessage = function(e) {
-          playbackNode.port.postMessage(int16LEToFloat32(e.data));
+
+        function playIncomingPCM(arrayBuf) {
+          const float32 = int16LEToFloat32(arrayBuf);
+          playbackNode.port.postMessage(float32);
+        }
+
+        audioWs.onmessage = function(e) {
+          playIncomingPCM(e.data);
+        };
+        audioWs.onerror = function(err) {
+          console.warn('Audio WebSocket notice:', err);
         };
 
         const remoteAudio = document.getElementById('callingRemoteAudio');
@@ -1471,55 +1500,73 @@ const isTamperProof = crypto.timingSafeEqual(
           remoteAudio.play().catch(function() {});
         }
 
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+        // Opportunistic WebRTC with STUN servers
+        try {
+          pc = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+            ],
+          });
+          dc = pc.createDataChannel('pcm', { ordered: true });
+          dc.binaryType = 'arraybuffer';
+          dc.onmessage = function(e) {
+            if (!audioWs || audioWs.readyState !== WebSocket.OPEN) {
+              playIncomingPCM(e.data);
+            }
+          };
 
-        await new Promise(function(resolve) {
-          if (pc.iceGatheringState === 'complete') resolve();
-          else {
-            const checkState = function() {
-              if (pc.iceGatheringState === 'complete') {
-                pc.removeEventListener('icegatheringstatechange', checkState);
-                resolve();
-              }
-            };
-            pc.addEventListener('icegatheringstatechange', checkState);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          await new Promise(function(resolve) {
+            if (pc.iceGatheringState === 'complete') resolve();
+            else {
+              const checkState = function() {
+                if (pc.iceGatheringState === 'complete') {
+                  pc.removeEventListener('icegatheringstatechange', checkState);
+                  resolve();
+                }
+              };
+              pc.addEventListener('icegatheringstatechange', checkState);
+              setTimeout(resolve, 2000);
+            }
+          });
+
+          const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+          if (apiKey) {
+            headers['x-api-key'] = apiKey;
+            headers['authorization'] = 'Bearer ' + apiKey;
           }
-        });
 
-        const apiKey = getApiKey();
-        const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
-        if (apiKey) {
-          headers['x-api-key'] = apiKey;
-          headers['authorization'] = 'Bearer ' + apiKey;
+          const sdpRes = await fetch('/api/calling/sessions/' + encodeURIComponent(sessionName) + '/calls/' + encodeURIComponent(callId) + '/webrtc', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ sdp_offer: pc.localDescription.sdp }),
+          });
+
+          if (sdpRes.ok) {
+            const resJson = await sdpRes.json();
+            const answerSdp = resJson.sdp_answer || resJson.sdpAnswer;
+            if (answerSdp) {
+              await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+            }
+          }
+        } catch (rtcErr) {
+          console.warn('WebRTC negotiation bypassed (using direct WebSocket audio):', rtcErr);
         }
-
-        const sdpRes = await fetch('/api/calling/sessions/' + encodeURIComponent(sessionName) + '/calls/' + encodeURIComponent(callId) + '/webrtc', {
-          method: 'POST',
-          headers: headers,
-          body: JSON.stringify({ sdp_offer: pc.localDescription.sdp }),
-        });
-
-        if (!sdpRes.ok) {
-          const errText = await sdpRes.text();
-          throw new Error('WebRTC exchange error: ' + errText);
-        }
-
-        const resJson = await sdpRes.json();
-        const answerSdp = resJson.sdp_answer || resJson.sdpAnswer;
-        if (!answerSdp) {
-          throw new Error('No SDP answer received from engine');
-        }
-        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
         webRtcConn = {
           pc: pc,
+          dc: dc,
+          audioWs: audioWs,
           micStream: micStream,
           remoteStream: streamDest.stream,
           close: function() {
+            try { if (audioWs) audioWs.close(); } catch (e) {}
             try { micStream.getTracks().forEach(function(t) { t.stop(); }); } catch (e) {}
             try { ctx.close().catch(function() {}); } catch (e) {}
-            try { pc.close(); } catch (e) {}
+            try { if (pc) pc.close(); } catch (e) {}
           }
         };
 
@@ -1539,9 +1586,9 @@ const isTamperProof = crypto.timingSafeEqual(
           if (peerLabel) peerLabel.innerText = Math.round(db) + ' dB';
         });
 
-      } catch (wrtcErr) {
-        console.error('WebRTC initialization failed:', wrtcErr);
-        alert('Audio/WebRTC setup failed: ' + wrtcErr.message);
+      } catch (err) {
+        console.error('Audio initialization failed:', err);
+        alert('Audio setup failed: ' + err.message);
         teardownCurrentCallState();
         return;
       }

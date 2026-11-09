@@ -33,6 +33,7 @@ type activeCall struct {
 	owner     *string
 	cm        *call.CallManager
 	bridge    *webrtc.Bridge
+	wsBridge  *webrtc.WSBridge
 }
 
 // Engine coordinates VoIP calling across providers and browser WebRTC bridges.
@@ -276,11 +277,16 @@ func (e *Engine) wireCallManager(ac *activeCall) {
 		e.mu.RLock()
 		callRef, ok := e.activeCalls[callID]
 		var br *webrtc.Bridge
+		var wsBr *webrtc.WSBridge
 		if ok {
 			br = callRef.bridge
+			wsBr = callRef.wsBridge
 		}
 		e.mu.RUnlock()
 
+		if wsBr != nil {
+			_ = wsBr.WritePCM(pcm16)
+		}
 		if br != nil {
 			_ = br.WritePCM(pcm16)
 		}
@@ -299,6 +305,9 @@ func (e *Engine) teardownCall(callID, reason string) {
 		return
 	}
 
+	if ac.wsBridge != nil {
+		ac.wsBridge.Close()
+	}
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
@@ -531,6 +540,43 @@ func (e *Engine) HandleWebRTC(ctx context.Context, tenantID, sessionID, callID s
 	e.mu.Unlock()
 
 	return answer, nil
+}
+
+// AttachSocketBridge registers a WebSocket audio bridge for the call.
+func (e *Engine) AttachSocketBridge(ctx context.Context, tenantID, sessionID, callID string, wsBridge *webrtc.WSBridge) error {
+	e.mu.RLock()
+	ac, ok := e.activeCalls[callID]
+	e.mu.RUnlock()
+	if !ok || !matchesTenant(tenantID, ac.tenantID) {
+		return core.ErrCallNotFound
+	}
+
+	e.mu.Lock()
+	if ac.wsBridge != nil && ac.wsBridge != wsBridge {
+		ac.wsBridge.Close()
+	}
+	ac.wsBridge = wsBridge
+	e.mu.Unlock()
+	return nil
+}
+
+// FeedCallPCM passes browser PCM into the active call's CallManager.
+func (e *Engine) FeedCallPCM(callID string, pcm []float32) {
+	e.mu.RLock()
+	ac, ok := e.activeCalls[callID]
+	e.mu.RUnlock()
+	if ok && ac.cm != nil {
+		ac.cm.FeedCapturedPCM(pcm)
+	}
+}
+
+// DetachBridge removes the WebSocket bridge reference when the socket closes.
+func (e *Engine) DetachBridge(callID string, wsBridge *webrtc.WSBridge) {
+	e.mu.Lock()
+	if ac, ok := e.activeCalls[callID]; ok && ac.wsBridge == wsBridge {
+		ac.wsBridge = nil
+	}
+	e.mu.Unlock()
 }
 
 func (e *Engine) GetCall(tenantID, callID string) (*core.CallRecord, bool) {

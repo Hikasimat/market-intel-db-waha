@@ -7,6 +7,7 @@ import {
 } from '@whiskeysockets/baileys';
 import { config } from '../config.js';
 import { createChildLogger } from '../logger.js';
+import { waCallsEvents } from './event-consumer.js';
 
 const logger = createChildLogger('CallingBridge');
 
@@ -175,6 +176,9 @@ export class CallingBridge {
       }
       const info = (await res.json()) as { id: string };
       this.callingSessionIds.set(wahaSession, info.id);
+      waCallsEvents.registerSessionMapping(info.id, wahaSession);
+      waCallsEvents.registerSessionMapping(CallingBridge.engineName(wahaSession), wahaSession);
+      waCallsEvents.registerSessionMapping(wahaSession, wahaSession);
       logger.info(`[${wahaSession}] Calling bridge active (engine session ${info.id})`);
       return true;
     } catch (err: any) {

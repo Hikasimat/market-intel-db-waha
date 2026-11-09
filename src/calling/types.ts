@@ -29,14 +29,26 @@ export type WaCallsSSEEvent =
   | { type: 'call-list'; calls: WaCallsCallRecord[] };
 
 export interface VoiceCallWebhookPayload {
+  id?: string;
   callId: string;
-  sessionId: string;
+  from?: string;
+  chatId?: string;
   peer: string;
+  caller?: string;
+  callerPhone?: string;
   direction: 'inbound' | 'outbound';
   status: string;
+  session?: string;
+  sessionId: string;
+  timestamp?: number;
+  date?: string;
   startedAt?: number;
   endedAt?: number;
   durationMs?: number;
   reason?: string;
+  isVideo?: boolean;
+  isGroup?: boolean;
+  groupJid?: string | null;
+  offline?: boolean;
 }
 
