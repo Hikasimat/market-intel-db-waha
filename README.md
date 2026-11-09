@@ -295,6 +295,49 @@ List all participating groups.
 curl http://localhost:3000/api/default/groups
 ```
 
+#### `POST /api/:session/groups`
+Create a new WhatsApp group.
+```bash
+curl -X POST http://localhost:3000/api/default/groups \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Project Alpha",
+    "participants": ["1234567890", "9876543210"]
+  }'
+```
+
+#### `GET /api/:session/groups/:id`
+Get metadata and participant list for a specific group.
+```bash
+curl http://localhost:3000/api/default/groups/123456789-987654321@g.us
+```
+
+#### `POST /api/:session/groups/:id/participants/add`
+Add participants to an existing WhatsApp group.
+```bash
+curl -X POST http://localhost:3000/api/default/groups/123456789-987654321@g.us/participants/add \
+  -H "Content-Type: application/json" \
+  -d '{
+    "participants": ["1234567890"]
+  }'
+```
+
+#### `POST /api/:session/groups/:id/participants/remove`
+Remove participants from a WhatsApp group.
+```bash
+curl -X POST http://localhost:3000/api/default/groups/123456789-987654321@g.us/participants/remove \
+  -H "Content-Type: application/json" \
+  -d '{
+    "participants": ["1234567890"]
+  }'
+```
+
+#### `POST /api/:session/groups/:id/leave`
+Leave a WhatsApp group.
+```bash
+curl -X POST http://localhost:3000/api/default/groups/123456789-987654321@g.us/leave
+```
+
 ---
 
 ---
@@ -317,6 +360,9 @@ curl http://localhost:3000/api/default/groups
 | `message.ack` | Dispatched when message status changes | `id`, `from`, `ack` (1=Sent, 2=Delivered, 3=Read) |
 | `message.reaction` | Dispatched when an emoji reaction occurs | `key`, `reaction`, `session` |
 | `presence.update` | Dispatched on contact typing or online status | `id`, `presences` |
+| `group.create` | Dispatched when a new group is created | `id`, `subject`, `owner`, `participants` |
+| `group.join` | Dispatched when a participant joins a group | `id`, `participants` |
+| `group.leave` | Dispatched when a participant leaves a group | `id`, `participants` |
 | `group.v2.participants` | Dispatched on participant join/leave/admin changes | `id`, `participants`, `action` |
 | `group.v2.update` | Dispatched when group subject or settings change | `id`, `subject`, `desc` |
 | `call.received` | Dispatched when an incoming call offer is detected | `id`, `from`, `chatId`, `isVideo`, `isGroup`, `status: "offer"` |

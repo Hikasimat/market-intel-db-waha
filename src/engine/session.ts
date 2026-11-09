@@ -21,12 +21,23 @@ import { webhookDispatcher } from '../webhooks/dispatcher.js';
 import { callingBridge } from '../calling/bridge.js';
 
 export function toBaileysJid(chatId: string): string {
-  let cleaned = chatId.trim();
+  let cleaned = chatId.trim().replace(/^\+/, '');
   if (cleaned.endsWith('@c.us')) {
     return cleaned.replace('@c.us', '@s.whatsapp.net');
   }
   if (!cleaned.includes('@')) {
     return `${cleaned}@s.whatsapp.net`;
+  }
+  return cleaned;
+}
+
+export function toBaileysGroupJid(groupId: string): string {
+  let cleaned = groupId.trim();
+  if (cleaned.endsWith('@c.us') || cleaned.endsWith('@s.whatsapp.net')) {
+    return cleaned.replace(/@(c\.us|s\.whatsapp\.net)$/, '@g.us');
+  }
+  if (!cleaned.includes('@')) {
+    return `${cleaned}@g.us`;
   }
   return cleaned;
 }
@@ -326,6 +337,30 @@ export class WhatsappSession extends EventEmitter {
         }
       });
 
+      // Handle group creation / joining
+      this.sock.ev.on('groups.upsert', (newGroups) => {
+        for (const g of newGroups) {
+          webhookDispatcher.dispatch('group.create', this.name, {
+            session: this.name,
+            id: normalizeJid(g.id),
+            subject: g.subject,
+            owner: normalizeJid(g.owner),
+            creation: g.creation,
+            desc: g.desc,
+            size: g.size || g.participants?.length,
+            participants: g.participants?.map((p) => ({
+              id: normalizeJid(p.id),
+              admin: p.admin,
+            })),
+          });
+          webhookDispatcher.dispatch('group.v2.join', this.name, {
+            session: this.name,
+            id: normalizeJid(g.id),
+            subject: g.subject,
+          });
+        }
+      });
+
       // Handle WhatsApp call events
       this.sock.ev.on('call', async (calls) => {
         try {
@@ -564,6 +599,173 @@ export class WhatsappSession extends EventEmitter {
         admin: p.admin,
       })),
     }));
+  }
+
+  public async createGroup(subject: string, participants: string[]): Promise<any> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    if (!subject || typeof subject !== 'string' || !subject.trim()) {
+      throw new Error('Group subject/name is required.');
+    }
+    if (!Array.isArray(participants) || participants.length === 0) {
+      throw new Error('At least one participant is required to create a group.');
+    }
+    const jids = participants.map((p) => toBaileysJid(p));
+    const group = await this.sock.groupCreate(subject.trim(), jids);
+    const normalized = {
+      id: group.id,
+      subject: group.subject,
+      creation: group.creation,
+      owner: normalizeJid(group.owner),
+      desc: group.desc,
+      size: group.size || group.participants?.length,
+      participants: group.participants?.map((p) => ({
+        id: normalizeJid(p.id),
+        admin: p.admin,
+      })),
+    };
+
+    // Dispatch webhooks for group creation
+    webhookDispatcher.dispatch('group.create', this.name, {
+      session: this.name,
+      ...normalized,
+    });
+    webhookDispatcher.dispatch('group.v2.participants', this.name, {
+      session: this.name,
+      id: normalized.id,
+      participants: normalized.participants?.map((p) => p.id) || [],
+      action: 'add',
+    });
+
+    return normalized;
+  }
+
+  public async getGroup(groupId: string): Promise<any> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    const jid = toBaileysGroupJid(groupId);
+    const g = await this.sock.groupMetadata(jid);
+    return {
+      id: g.id,
+      subject: g.subject,
+      creation: g.creation,
+      owner: normalizeJid(g.owner),
+      desc: g.desc,
+      size: g.size || g.participants?.length,
+      participants: g.participants?.map((p) => ({
+        id: normalizeJid(p.id),
+        admin: p.admin,
+      })),
+    };
+  }
+
+  public async updateGroupParticipants(
+    groupId: string,
+    participants: string[],
+    action: 'add' | 'remove' | 'promote' | 'demote',
+  ): Promise<any> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    if (!Array.isArray(participants) || participants.length === 0) {
+      throw new Error('Participants array is required.');
+    }
+    const jid = toBaileysGroupJid(groupId);
+    const jids = participants.map((p) => toBaileysJid(p));
+    const res = await this.sock.groupParticipantsUpdate(jid, jids, action);
+
+    const normalizedJid = normalizeJid(jid);
+    const normalizedParticipants = jids.map(normalizeJid);
+
+    webhookDispatcher.dispatch('group.v2.participants', this.name, {
+      session: this.name,
+      id: normalizedJid,
+      participants: normalizedParticipants,
+      action,
+    });
+
+    if (action === 'add') {
+      webhookDispatcher.dispatch('group.join', this.name, {
+        session: this.name,
+        id: normalizedJid,
+        participants: normalizedParticipants,
+      });
+    } else if (action === 'remove') {
+      webhookDispatcher.dispatch('group.leave', this.name, {
+        session: this.name,
+        id: normalizedJid,
+        participants: normalizedParticipants,
+      });
+    }
+
+    return res;
+  }
+
+  public async updateGroupSubject(groupId: string, subject: string): Promise<void> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    const jid = toBaileysGroupJid(groupId);
+    await this.sock.groupUpdateSubject(jid, subject);
+    webhookDispatcher.dispatch('group.v2.update', this.name, {
+      session: this.name,
+      id: normalizeJid(jid),
+      subject,
+    });
+  }
+
+  public async updateGroupDescription(groupId: string, description: string): Promise<void> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    const jid = toBaileysGroupJid(groupId);
+    await this.sock.groupUpdateDescription(jid, description);
+    webhookDispatcher.dispatch('group.v2.update', this.name, {
+      session: this.name,
+      id: normalizeJid(jid),
+      desc: description,
+    });
+  }
+
+  public async leaveGroup(groupId: string): Promise<void> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    const jid = toBaileysGroupJid(groupId);
+    await this.sock.groupLeave(jid);
+    webhookDispatcher.dispatch('group.leave', this.name, {
+      session: this.name,
+      id: normalizeJid(jid),
+    });
+  }
+
+  public async getGroupInviteCode(groupId: string): Promise<{ inviteCode?: string; inviteUrl?: string }> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    const jid = toBaileysGroupJid(groupId);
+    const code = await this.sock.groupInviteCode(jid);
+    return {
+      inviteCode: code,
+      inviteUrl: code ? `https://chat.whatsapp.com/${code}` : undefined,
+    };
+  }
+
+  public async acceptGroupInvite(code: string): Promise<string | undefined> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    const cleaned = code.trim().replace(/^https:\/\/chat\.whatsapp\.com\//, '');
+    const groupId = await this.sock.groupAcceptInvite(cleaned);
+    if (groupId) {
+      webhookDispatcher.dispatch('group.join', this.name, {
+        session: this.name,
+        id: normalizeJid(groupId),
+      });
+    }
+    return groupId;
   }
 
   public async sendSeen(chatId: string, messageId?: string): Promise<void> {

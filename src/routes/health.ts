@@ -866,6 +866,52 @@ healthRouter.get('/', dashboardBasicAuth, (req, res) => {
             Force Dispatch QR Code
           </button>
         </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>👥 Create WhatsApp Group</span>
+            <span class="pill pill-green">POST /api/:session/groups</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Session Name</label>
+            <input id="apiGroupSessionInput" class="input" type="text" value="default">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Group Subject / Title</label>
+            <input id="apiGroupNameInput" class="input" type="text" placeholder="e.g. My Team Group">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Participants (Phone Numbers, comma-separated)</label>
+            <input id="apiGroupParticipantsInput" class="input" type="text" placeholder="e.g. 1234567890, 9876543210">
+          </div>
+          <button class="btn btn-primary" style="width: 100%;" onclick="executeCreateGroup()">
+            Create WhatsApp Group
+          </button>
+          <div id="apiGroupCreateResult" style="display: none; margin-top: 14px;" class="json-box"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>➕ Add Group Participant</span>
+            <span class="pill pill-blue">POST /api/:session/groups/:id/participants/add</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Session Name</label>
+            <input id="apiGroupAddSessionInput" class="input" type="text" value="default">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Group ID</label>
+            <input id="apiGroupIdInput" class="input" type="text" placeholder="e.g. 123456789-987654321@g.us">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Participant Phone Numbers (comma-separated)</label>
+            <input id="apiGroupAddParticipantsInput" class="input" type="text" placeholder="e.g. 1234567890">
+          </div>
+          <button class="btn" style="width: 100%;" onclick="executeAddGroupParticipant()">
+            Add Participant to Group
+          </button>
+          <div id="apiGroupAddResult" style="display: none; margin-top: 14px;" class="json-box"></div>
+        </div>
       </div>
     </div>
 
@@ -2292,6 +2338,76 @@ const isTamperProof = crypto.timingSafeEqual(
         const data = await res.json();
         resultBox.innerText = JSON.stringify(data, null, 2);
         fetchStats();
+      } catch (err) {
+        resultBox.innerText = 'Error: ' + err.message;
+      }
+    }
+
+    async function executeCreateGroup() {
+      const session = document.getElementById('apiGroupSessionInput').value.trim() || 'default';
+      const name = document.getElementById('apiGroupNameInput').value.trim();
+      const rawPart = document.getElementById('apiGroupParticipantsInput').value.trim();
+      const resultBox = document.getElementById('apiGroupCreateResult');
+
+      if (!name || !rawPart) {
+        alert('Please provide both group name and at least one participant phone number.');
+        return;
+      }
+      const participants = rawPart.split(',').map(s => s.trim()).filter(Boolean);
+
+      resultBox.style.display = 'block';
+      resultBox.innerText = 'Creating WhatsApp group...';
+
+      try {
+        const apiKey = document.getElementById('consoleApiKeyInput')?.value?.trim() || getApiKey();
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+
+        const res = await fetch('/api/' + encodeURIComponent(session) + '/groups', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ name, participants })
+        });
+        const data = await res.json();
+        resultBox.innerText = JSON.stringify(data, null, 2);
+      } catch (err) {
+        resultBox.innerText = 'Error: ' + err.message;
+      }
+    }
+
+    async function executeAddGroupParticipant() {
+      const session = document.getElementById('apiGroupAddSessionInput').value.trim() || 'default';
+      const groupId = document.getElementById('apiGroupIdInput').value.trim();
+      const rawPart = document.getElementById('apiGroupAddParticipantsInput').value.trim();
+      const resultBox = document.getElementById('apiGroupAddResult');
+
+      if (!groupId || !rawPart) {
+        alert('Please provide both Group ID and participant phone numbers.');
+        return;
+      }
+      const participants = rawPart.split(',').map(s => s.trim()).filter(Boolean);
+
+      resultBox.style.display = 'block';
+      resultBox.innerText = 'Adding participant to group...';
+
+      try {
+        const apiKey = document.getElementById('consoleApiKeyInput')?.value?.trim() || getApiKey();
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) {
+          headers['x-api-key'] = apiKey;
+          headers['authorization'] = 'Bearer ' + apiKey;
+        }
+
+        const res = await fetch('/api/' + encodeURIComponent(session) + '/groups/' + encodeURIComponent(groupId) + '/participants/add', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ participants })
+        });
+        const data = await res.json();
+        resultBox.innerText = JSON.stringify(data, null, 2);
       } catch (err) {
         resultBox.innerText = 'Error: ' + err.message;
       }
