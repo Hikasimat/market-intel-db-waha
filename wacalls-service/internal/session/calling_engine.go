@@ -286,8 +286,7 @@ func (e *Engine) wireCallManager(ac *activeCall) {
 
 		if wsBr != nil {
 			_ = wsBr.WritePCM(pcm16)
-		}
-		if br != nil {
+		} else if br != nil {
 			_ = br.WritePCM(pcm16)
 		}
 	}
@@ -524,7 +523,12 @@ func (e *Engine) HandleWebRTC(ctx context.Context, tenantID, sessionID, callID s
 	}
 
 	bridge.OnBrowserPCM = func(pcm []float32) {
-		ac.cm.FeedCapturedPCM(pcm)
+		e.mu.RLock()
+		hasWS := ac.wsBridge != nil
+		e.mu.RUnlock()
+		if !hasWS {
+			ac.cm.FeedCapturedPCM(pcm)
+		}
 	}
 	bridge.OnTerminalICE = func() {
 		go func() {

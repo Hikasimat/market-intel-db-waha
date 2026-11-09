@@ -20,14 +20,16 @@ func (m *CallManager) initSrtpKeysLocked() {
 	}
 	ourDeviceJid := ensureDeviceJid(findOurDevice(participants, ourBase, m.ownCredJid()))
 
-	rawPeer := m.acceptedByJid
-	if rawPeer == "" {
-		rawPeer = call.PeerJid
+	var peerDeviceJid string
+	if m.acceptedByJid != "" {
+		peerDeviceJid = ensureDeviceJid(m.acceptedByJid)
+	} else {
+		rawPeer := call.PeerJid
 		if p := firstPeerDevice(participants, ourBase); p != "" {
 			rawPeer = p
 		}
+		peerDeviceJid = ensureDeviceJid(rawPeer)
 	}
-	peerDeviceJid := ensureDeviceJid(findPeerDevice(participants, wanode.CleanJID(rawPeer), rawPeer))
 
 	sendKM, err1 := media.DerivePerJidSrtpKey(call.EncryptionKey, ourDeviceJid)
 

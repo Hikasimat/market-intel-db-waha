@@ -106,6 +106,20 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		return
 	}
 
+	if !call.IsInitiator() {
+		m.log.Info("incoming call accepted on another device", "call_id", call.CallID, "by", peerJid.String())
+		m.mu.Lock()
+		_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: core.EndCallReasonUserEnded})
+		ended := call
+		m.emitState()
+		m.mu.Unlock()
+		if m.OnEnded != nil {
+			m.OnEnded(ended)
+		}
+		m.cleanupMedia()
+		return
+	}
+
 	if signaling.NeedsDecryption(info.Tag) {
 		peerKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid)
 		if err != nil {
@@ -123,18 +137,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
 	m.emitState()
 	m.acceptedByJid = peerJid.String()
-	if m.peerSsrcs == nil || !m.actualPeerSet {
-		var participants []string
-		if call.RelayData != nil {
-			participants = call.RelayData.ParticipantJids
-		}
-		rawPeer := m.acceptedByJid
-		if rawPeer == "" {
-			rawPeer = call.PeerJid
-		}
-		peerDeviceJid := ensureDeviceJid(findPeerDevice(participants, wanode.CleanJID(rawPeer), rawPeer))
-		m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
-	}
+	peerDeviceJid := ensureDeviceJid(peerJid.String())
+	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
+	m.actualPeerSet = false
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
 	m.initSrtpKeysLocked()
 	hasConn := m.relay.HasConnection()
@@ -225,6 +230,10 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 	m.mu.Lock()
 	call := m.currentCall
 	if call == nil {
+		m.mu.Unlock()
+		return
+	}
+	if call.RelayData != nil && len(call.RelayData.Endpoints) > 0 && m.outgoingPreacceptSent {
 		m.mu.Unlock()
 		return
 	}

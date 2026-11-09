@@ -126,6 +126,10 @@ func (m *CallManager) onRelayData(data []byte) {
 		m.mu.Unlock()
 		return
 	}
+	if m.currentCall != nil && m.currentCall.IsInitiator() && m.acceptedByJid == "" {
+		m.mu.Unlock()
+		return
+	}
 	ssrc := uint32(data[8])<<24 | uint32(data[9])<<16 | uint32(data[10])<<8 | uint32(data[11])
 	if ssrc == m.selfSsrc {
 		m.mu.Unlock()

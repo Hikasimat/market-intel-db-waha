@@ -15,6 +15,7 @@ import (
 	"wacalls/internal/webrtc"
 
 	"github.com/coder/websocket"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -482,6 +483,14 @@ func (s *Server) handleBridgeEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	from, _ := types.ParseJID(body.From)
 	node := bridge.DecodeNode(body.Data)
+	if body.ID != "" {
+		if node.Attrs == nil {
+			node.Attrs = waBinary.Attrs{}
+		}
+		if _, ok := node.Attrs["id"]; !ok {
+			node.Attrs["id"] = body.ID
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 
 	go func() {

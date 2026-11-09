@@ -1434,6 +1434,19 @@ const isTamperProof = crypto.timingSafeEqual(
       let offMicMeter = null;
       let offPeerMeter = null;
 
+      activeCallState = {
+        sessionName: sessionName,
+        callId: callId,
+        peer: peer,
+        direction: direction,
+        startedAt: startTime,
+        timerInterval: timerInterval,
+        webRtcConn: null,
+        offMicMeter: null,
+        offPeerMeter: null,
+        isMuted: false,
+      };
+
       try {
         const micStream = await navigator.mediaDevices.getUserMedia({
           audio: selectedMicId ? { deviceId: { exact: selectedMicId } } : true,
@@ -1462,8 +1475,7 @@ const isTamperProof = crypto.timingSafeEqual(
           const pcmData = float32ToInt16LE(e.data);
           if (audioWs && audioWs.readyState === WebSocket.OPEN) {
             audioWs.send(pcmData);
-          }
-          if (dc && dc.readyState === 'open') {
+          } else if (dc && dc.readyState === 'open') {
             dc.send(pcmData);
           }
         };
@@ -1586,25 +1598,21 @@ const isTamperProof = crypto.timingSafeEqual(
           if (peerLabel) peerLabel.innerText = Math.round(db) + ' dB';
         });
 
+        if (activeCallState && activeCallState.callId === callId) {
+          activeCallState.webRtcConn = webRtcConn;
+          activeCallState.offMicMeter = offMicMeter;
+          activeCallState.offPeerMeter = offPeerMeter;
+        } else {
+          if (offMicMeter) offMicMeter();
+          if (offPeerMeter) offPeerMeter();
+          if (webRtcConn) webRtcConn.close();
+        }
       } catch (err) {
         console.error('Audio initialization failed:', err);
         alert('Audio setup failed: ' + err.message);
         teardownCurrentCallState();
         return;
       }
-
-      activeCallState = {
-        sessionName: sessionName,
-        callId: callId,
-        peer: peer,
-        direction: direction,
-        startedAt: startTime,
-        timerInterval: timerInterval,
-        webRtcConn: webRtcConn,
-        offMicMeter: offMicMeter,
-        offPeerMeter: offPeerMeter,
-        isMuted: false,
-      };
     }
 
     function toggleMuteMic() {

@@ -237,6 +237,7 @@ export class CallingBridge {
           ...child,
           attrs: {
             ...(child.attrs || {}),
+            id: (child.attrs?.id as string) || stanzaId,
             from: from,
             'call-id': callId,
           },
