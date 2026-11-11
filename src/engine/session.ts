@@ -282,9 +282,12 @@ export class WhatsappSession extends EventEmitter {
             continue;
           }
           const key = update.key;
-          const fromMe = Boolean(key.fromMe);
-          const remoteJid = normalizeJid(key.remoteJid);
           const rawId = key.id || '';
+          const isRecentSent = this.recentMessages.some(
+            (m) => m.id === rawId || m.id.endsWith(`_${rawId}`)
+          );
+          const fromMe = key.fromMe !== undefined ? Boolean(key.fromMe) : (isRecentSent || true);
+          const remoteJid = normalizeJid(key.remoteJid);
           const ack = rawStatus;
           const payload = {
             id: buildMessageId(fromMe, remoteJid, rawId),
