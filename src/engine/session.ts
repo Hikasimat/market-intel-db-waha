@@ -235,13 +235,18 @@ export class WhatsappSession extends EventEmitter {
       // Handle incoming messages
       this.sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const rawMsg of messages) {
+         try {
           const waMessage = toWAMessage(rawMsg);
 
           // If message contains media, download and attach URL
           if (waMessage.hasMedia) {
-            const savedMedia = await downloadAndSaveMedia(this.name, rawMsg, this.sock);
-            if (savedMedia) {
-              waMessage.mediaUrl = savedMedia.url;
+            try {
+              const savedMedia = await downloadAndSaveMedia(this.name, rawMsg, this.sock);
+              if (savedMedia) {
+                waMessage.mediaUrl = savedMedia.url;
+              }
+            } catch (mediaErr: any) {
+              this.logger.warn(`Media download failed for ${waMessage.id}: ${mediaErr?.message}`);
             }
           }
 
@@ -260,13 +265,22 @@ export class WhatsappSession extends EventEmitter {
           }
 
           this.addRecentMessage(waMessage);
-          this.emit('message', waMessage);
 
-          // Dispatch to webhooks
+          // Dispatch to webhooks FIRST so a failing local listener can never drop a message
+          // (group messages from other members included).
           if (!waMessage.fromMe) {
             webhookDispatcher.dispatch('message', this.name, waMessage);
           }
           webhookDispatcher.dispatch('message.any', this.name, waMessage);
+
+          try {
+            this.emit('message', waMessage);
+          } catch (emitErr: any) {
+            this.logger.warn(`message listener error: ${emitErr?.message}`);
+          }
+         } catch (err: any) {
+          this.logger.error(`Failed to process incoming message ${rawMsg?.key?.id}: ${err?.message}`);
+         }
         }
       });
 
