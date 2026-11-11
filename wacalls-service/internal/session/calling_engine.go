@@ -531,9 +531,11 @@ func (e *Engine) HandleWebRTC(ctx context.Context, tenantID, sessionID, callID s
 		}
 	}
 	bridge.OnTerminalICE = func() {
-		go func() {
-			_ = e.EndCall(context.Background(), tenantID, sessionID, callID)
-		}()
+		e.mu.Lock()
+		if ac.bridge == bridge {
+			ac.bridge = nil
+		}
+		e.mu.Unlock()
 	}
 
 	e.mu.Lock()
@@ -550,6 +552,12 @@ func (e *Engine) HandleWebRTC(ctx context.Context, tenantID, sessionID, callID s
 func (e *Engine) AttachSocketBridge(ctx context.Context, tenantID, sessionID, callID string, wsBridge *webrtc.WSBridge) error {
 	e.mu.RLock()
 	ac, ok := e.activeCalls[callID]
+	if !ok && strings.HasPrefix(callID, "call_") {
+		ac, ok = e.activeCalls[callID[5:]]
+	}
+	if !ok {
+		ac, ok = e.activeCalls["call_"+callID]
+	}
 	e.mu.RUnlock()
 	if !ok || !matchesTenant(tenantID, ac.tenantID) {
 		return core.ErrCallNotFound
@@ -568,6 +576,12 @@ func (e *Engine) AttachSocketBridge(ctx context.Context, tenantID, sessionID, ca
 func (e *Engine) FeedCallPCM(callID string, pcm []float32) {
 	e.mu.RLock()
 	ac, ok := e.activeCalls[callID]
+	if !ok && strings.HasPrefix(callID, "call_") {
+		ac, ok = e.activeCalls[callID[5:]]
+	}
+	if !ok {
+		ac, ok = e.activeCalls["call_"+callID]
+	}
 	e.mu.RUnlock()
 	if ok && ac.cm != nil {
 		ac.cm.FeedCapturedPCM(pcm)
@@ -577,7 +591,14 @@ func (e *Engine) FeedCallPCM(callID string, pcm []float32) {
 // DetachBridge removes the WebSocket bridge reference when the socket closes.
 func (e *Engine) DetachBridge(callID string, wsBridge *webrtc.WSBridge) {
 	e.mu.Lock()
-	if ac, ok := e.activeCalls[callID]; ok && ac.wsBridge == wsBridge {
+	ac, ok := e.activeCalls[callID]
+	if !ok && strings.HasPrefix(callID, "call_") {
+		ac, ok = e.activeCalls[callID[5:]]
+	}
+	if !ok {
+		ac, ok = e.activeCalls["call_"+callID]
+	}
+	if ok && ac.wsBridge == wsBridge {
 		ac.wsBridge = nil
 	}
 	e.mu.Unlock()

@@ -138,6 +138,12 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 					apiKey = strings.TrimPrefix(authHeader, "Bearer ")
 				}
 			}
+			if apiKey == "" {
+				apiKey = r.URL.Query().Get("token")
+				if apiKey == "" {
+					apiKey = r.URL.Query().Get("api_key")
+				}
+			}
 			if apiKey != s.cfg.APIKey {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
 				return
