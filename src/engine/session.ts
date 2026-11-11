@@ -12,8 +12,8 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import { useAtomicMultiFileAuthState } from './auth.js';
-import { SessionStatus, type MeInfo, type SessionInfo, type WAMessage } from './types.js';
-import { toWAMessage, normalizeJid, parseMessageId, toWACallPayload } from './normalizer.js';
+import { SessionStatus, AckNames, type MeInfo, type SessionInfo, type WAMessage } from './types.js';
+import { toWAMessage, normalizeJid, parseMessageId, toWACallPayload, buildMessageId } from './normalizer.js';
 import { resolveMediaBuffer, downloadAndSaveMedia, type MediaFileInput } from './media.js';
 import { createChildLogger } from '../logger.js';
 import { config } from '../config.js';
@@ -267,14 +267,33 @@ export class WhatsappSession extends EventEmitter {
       });
 
       // Handle message acks
+      // The ack MUST reference the exact same composite message id that the original
+      // message event / send API response used (buildMessageId), otherwise the backend
+      // can never match the acknowledgement to its stored message. The raw Baileys key id,
+      // originating session, remote JID and direction are carried explicitly.
       this.sock.ev.on('messages.update', (updates) => {
         for (const update of updates) {
-          const remoteJid = normalizeJid(update.key.remoteJid);
-          const ack = update.update.status || 0;
+          const rawStatus = update.update?.status;
+          if (typeof rawStatus !== 'number') {
+            // Not an acknowledgement update (e.g. message edit / poll update) — never fake ack 0.
+            continue;
+          }
+          const key = update.key;
+          const fromMe = Boolean(key.fromMe);
+          const remoteJid = normalizeJid(key.remoteJid);
+          const rawId = key.id || '';
+          const ack = rawStatus;
           const payload = {
-            id: update.key.id,
+            id: buildMessageId(fromMe, remoteJid, rawId),
+            rawId,
+            session: this.name,
             from: remoteJid,
+            remoteJid,
+            chatId: remoteJid,
+            fromMe,
+            direction: fromMe ? 'outbound' : 'inbound',
             ack,
+            ackName: AckNames[ack] || String(ack),
           };
           this.emit('message.ack', payload);
           webhookDispatcher.dispatch('message.ack', this.name, payload);

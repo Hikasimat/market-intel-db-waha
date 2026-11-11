@@ -114,6 +114,7 @@ export function toWAMessage(msg: proto.IWebMessageInfo): WAMessage {
 
   return {
     id: messageId,
+    rawId: key.id || '',
     timestamp,
     from,
     fromMe,

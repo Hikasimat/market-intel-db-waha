@@ -56,6 +56,8 @@ export interface ReplyToMessage {
 
 export interface WAMessage {
   id: string;
+  /** Original Baileys key id (without direction/JID prefix). */
+  rawId?: string;
   timestamp: number;
   from: string;
   fromMe: boolean;
