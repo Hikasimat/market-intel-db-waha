@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
+import crypto from 'node:crypto';
 // @ts-ignore
 import wsPkg, { WebSocketServer as WSS, WebSocket as WS } from 'ws';
 const WebSocketServer = WSS || wsPkg?.WebSocketServer || wsPkg?.default?.WebSocketServer;
@@ -29,12 +30,59 @@ export class AudioSocketGateway {
       const xApiKey = req.headers['x-api-key'];
       const queryKey = url.searchParams.get('x-api-key');
 
-      const isAuthorized =
+      const isDirectKeyAuthorized =
         (typeof xApiKey === 'string' && xApiKey === config.apiKey) ||
         (typeof authHeader === 'string' && authHeader.replace(/^Bearer\s+/i, '') === config.apiKey) ||
         (queryKey === config.apiKey);
 
-      if (!isAuthorized) {
+      let isTokenAuthorized = false;
+      const tokenParam = url.searchParams.get('token');
+      if (tokenParam) {
+        try {
+          const decoded = Buffer.from(tokenParam, 'base64url').toString('utf-8');
+          let uid: string | undefined;
+          let sess: string | undefined;
+          let cid: string | undefined;
+          let expStr: string | undefined;
+          let sig: string | undefined;
+
+          if (decoded.startsWith('{')) {
+            const parsed = JSON.parse(decoded);
+            uid = String(parsed.uid);
+            sess = String(parsed.sess);
+            cid = String(parsed.cid);
+            expStr = String(parsed.exp);
+            sig = String(parsed.sig);
+          } else {
+            const parts = decoded.split(':');
+            if (parts.length === 5) {
+              [uid, sess, cid, expStr, sig] = parts;
+            }
+          }
+
+          if (uid && sess && cid && expStr && sig) {
+            const exp = parseInt(expStr, 10);
+            const now = Math.floor(Date.now() / 1000);
+            if (exp > now && sess === wahaSession && cid === callId) {
+              const expectedPayload = `${uid}:${sess}:${cid}:${expStr}`;
+              const expectedSig = crypto
+                .createHmac('sha256', config.apiKey)
+                .update(expectedPayload)
+                .digest('hex');
+              if (
+                sig.length === expectedSig.length &&
+                crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
+              ) {
+                isTokenAuthorized = true;
+              }
+            }
+          }
+        } catch (e: any) {
+          logger.warn(`Audio WS token verification error: ${e.message}`);
+        }
+      }
+
+      if (!isDirectKeyAuthorized && !isTokenAuthorized) {
         logger.warn(`Unauthorized audio websocket upgrade attempt for session ${wahaSession}`);
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();

@@ -42,19 +42,18 @@ export class WaCallsEventConsumer extends EventEmitter {
     }
   }
 
+  private getCallKey(sessionId: string, callId: string): string {
+    return `${sessionId || 'unknown'}:${callId}`;
+  }
+
   public getSessionName(sessionId: string): string {
-    if (!sessionId) return 'default';
+    if (!sessionId) return '';
     if (this.sessionNameMap.has(sessionId)) {
       return this.sessionNameMap.get(sessionId)!;
     }
     if (sessionId.startsWith('calling_')) {
       const stripped = sessionId.slice(8);
       return this.sessionNameMap.get(stripped) || stripped;
-    }
-    for (const [key, name] of this.sessionNameMap.entries()) {
-      if (key === sessionId || key.endsWith(sessionId) || sessionId.endsWith(key)) {
-        return name;
-      }
     }
     return sessionId;
   }
@@ -212,11 +211,12 @@ export class WaCallsEventConsumer extends EventEmitter {
 
         case 'incoming': {
           const sessionName = this.getSessionName(event.sessionId);
+          const callKey = this.getCallKey(event.sessionId, event.id);
           const offeredAt = event.offeredAt || Date.now();
-          this.callStartTimes.set(event.id, offeredAt);
-          this.callDirections.set(event.id, 'inbound');
+          this.callStartTimes.set(callKey, offeredAt);
+          this.callDirections.set(callKey, 'inbound');
           if (event.peer) {
-            this.callPeers.set(event.id, event.peer);
+            this.callPeers.set(callKey, event.peer);
           }
 
           const cleanPhone = (event.peer || '').split('@')[0].split(':')[0].replace(/\D/g, '');
@@ -258,17 +258,18 @@ export class WaCallsEventConsumer extends EventEmitter {
 
         case 'call-status': {
           const sessionName = this.getSessionName(event.sessionId);
-          const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(event.id) || (event.owner ? 'outbound' : 'outbound');
-          this.callDirections.set(event.id, dir);
+          const callKey = this.getCallKey(event.sessionId, event.id);
+          const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(callKey) || (event.owner ? 'outbound' : 'outbound');
+          this.callDirections.set(callKey, dir);
           if (event.peer) {
-            this.callPeers.set(event.id, event.peer);
+            this.callPeers.set(callKey, event.peer);
           }
 
-          const peer = event.peer || this.callPeers.get(event.id) || '';
+          const peer = event.peer || this.callPeers.get(callKey) || '';
           const cleanPhone = peer.split('@')[0].split(':')[0].replace(/\D/g, '');
           const callerJid = peer.includes('@') ? peer : (cleanPhone ? `${cleanPhone}@s.whatsapp.net` : '');
           const now = Date.now();
-          const startedAt = event.startedAt || this.callStartTimes.get(event.id) || now;
+          const startedAt = event.startedAt || this.callStartTimes.get(callKey) || now;
 
           const basePayload = {
             id: event.id,
@@ -312,15 +313,16 @@ export class WaCallsEventConsumer extends EventEmitter {
 
         case 'call-ended': {
           const sessionName = this.getSessionName(event.sessionId);
-          const startedAt = this.callStartTimes.get(event.id);
+          const callKey = this.getCallKey(event.sessionId, event.id);
+          const startedAt = this.callStartTimes.get(callKey);
           const endedAt = event.endedAt || Date.now();
           const durationMs = startedAt ? endedAt - startedAt : undefined;
-          this.callStartTimes.delete(event.id);
-          const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(event.id) || (event.owner ? 'outbound' : 'outbound');
-          this.callDirections.delete(event.id);
+          this.callStartTimes.delete(callKey);
+          const dir: 'inbound' | 'outbound' = event.direction || this.callDirections.get(callKey) || (event.owner ? 'outbound' : 'outbound');
+          this.callDirections.delete(callKey);
 
-          const peer = event.peer || this.callPeers.get(event.id) || '';
-          this.callPeers.delete(event.id);
+          const peer = event.peer || this.callPeers.get(callKey) || '';
+          this.callPeers.delete(callKey);
           const cleanPhone = peer.split('@')[0].split(':')[0].replace(/\D/g, '');
           const callerJid = peer.includes('@') ? peer : (cleanPhone ? `${cleanPhone}@s.whatsapp.net` : '');
 

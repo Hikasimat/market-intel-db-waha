@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { WhatsappSession } from '../engine/session.js';
 import { SessionStatus, type SessionInfo } from '../engine/types.js';
 import { createChildLogger } from '../logger.js';
@@ -7,9 +8,48 @@ import { config } from '../config.js';
 
 export class SessionManager {
   private sessions = new Map<string, WhatsappSession>();
+  private startingPromises = new Map<string, Promise<SessionInfo>>();
   private logger = createChildLogger('SessionManager');
 
   constructor(private sessionsBaseDir: string = config.sessionsDir) {}
+
+  private async acquireLock(name: string): Promise<boolean> {
+    const lockFile = path.join(this.sessionsBaseDir, `${name}.lock`);
+    const now = Date.now();
+    const leaseTime = 30000; // 30 seconds
+    try {
+      const content = await fs.readFile(lockFile, 'utf-8');
+      const lockData = JSON.parse(content);
+      if (lockData.expiresAt && lockData.expiresAt > now && lockData.pid !== process.pid) {
+        this.logger.warn(`Session ${name} is locked by PID ${lockData.pid} on ${lockData.hostname} until ${new Date(lockData.expiresAt).toISOString()}`);
+        return false;
+      }
+    } catch {
+      // Lock file does not exist or is corrupted; proceed to claim lock
+    }
+    try {
+      const lockData = {
+        pid: process.pid,
+        hostname: os.hostname(),
+        acquiredAt: now,
+        expiresAt: now + leaseTime,
+      };
+      await fs.writeFile(lockFile, JSON.stringify(lockData), 'utf-8');
+      return true;
+    } catch (err: any) {
+      this.logger.warn(`Could not acquire file lock for ${name}: ${err.message}`);
+      return false;
+    }
+  }
+
+  private async releaseLock(name: string): Promise<void> {
+    const lockFile = path.join(this.sessionsBaseDir, `${name}.lock`);
+    try {
+      await fs.unlink(lockFile);
+    } catch {
+      // ignored
+    }
+  }
 
   public getSession(name: string): WhatsappSession | undefined {
     return this.sessions.get(name);
@@ -31,13 +71,29 @@ export class SessionManager {
   }
 
   public async startSession(name: string): Promise<SessionInfo> {
-    let session = this.sessions.get(name);
-    if (!session) {
-      session = new WhatsappSession(name, this.sessionsBaseDir);
-      this.sessions.set(name, session);
+    const inFlight = this.startingPromises.get(name);
+    if (inFlight) {
+      this.logger.info(`Session ${name} start already in flight; coalescing request.`);
+      return inFlight;
     }
-    await session.start();
-    return session.getInfo();
+
+    const startPromise = (async () => {
+      try {
+        let session = this.sessions.get(name);
+        if (!session) {
+          session = new WhatsappSession(name, this.sessionsBaseDir);
+          this.sessions.set(name, session);
+        }
+        await this.acquireLock(name);
+        await session.start();
+        return session.getInfo();
+      } finally {
+        this.startingPromises.delete(name);
+      }
+    })();
+
+    this.startingPromises.set(name, startPromise);
+    return startPromise;
   }
 
   public async stopSession(name: string): Promise<SessionInfo> {
@@ -46,6 +102,7 @@ export class SessionManager {
       throw new Error(`Session '${name}' not found.`);
     }
     await session.stop();
+    await this.releaseLock(name);
     return session.getInfo();
   }
 
@@ -55,6 +112,7 @@ export class SessionManager {
       throw new Error(`Session '${name}' not found.`);
     }
     await session.logout();
+    await this.releaseLock(name);
     return session.getInfo();
   }
 
@@ -64,6 +122,7 @@ export class SessionManager {
       await session.stop();
       this.sessions.delete(name);
     }
+    await this.releaseLock(name);
     const sessionDir = path.join(this.sessionsBaseDir, name);
     try {
       await fs.rm(sessionDir, { recursive: true, force: true });

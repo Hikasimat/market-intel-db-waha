@@ -48,7 +48,7 @@ callingRouter.get('/api/calling/sessions/:session/events', (req: Request, res: R
   };
 
   const matchesSession = (sName: string) => {
-    if (!sName || !sessionName) return true;
+    if (!sName || !sessionName) return false;
     if (sName === sessionName) return true;
     const resolved = waCallsEvents.getSessionName(sName);
     return resolved === sessionName;
