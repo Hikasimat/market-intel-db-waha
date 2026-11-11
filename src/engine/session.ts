@@ -1,5 +1,6 @@
 import EventEmitter from 'node:events';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
@@ -140,7 +141,7 @@ export class WhatsappSession extends EventEmitter {
   private async initSocket(): Promise<void> {
     try {
       const { state, saveCreds } = await useAtomicMultiFileAuthState(this.sessionFolder);
-      const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] as any }));
+      const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1043857760] as any }));
 
       const socketConfig: Parameters<typeof makeWASocket>[0] = {
         version,
@@ -150,10 +151,16 @@ export class WhatsappSession extends EventEmitter {
         },
         logger: this.logger.child({ level: 'silent' }) as any,
         printQRInTerminal: false,
-        browser: Browsers.appropriate(config.deviceName),
+        browser: Browsers.ubuntu('Chrome'),
         defaultQueryTimeoutMs: 60_000,
         keepAliveIntervalMs: 30_000,
         markOnlineOnConnect: true,
+        syncFullHistory: false,
+        getMessage: async (key: WAMessageKey) => {
+          if (!key.id) return undefined;
+          const found = this.recentMessages.find((m) => m.rawId === key.id || m.id.endsWith(`_${key.id}`));
+          return (found as any)?._raw?.message || undefined;
+        },
       };
 
       this.sock = makeWASocket(socketConfig);
@@ -215,6 +222,7 @@ export class WhatsappSession extends EventEmitter {
           if (isLoggedOut) {
             this.shouldReconnect = false;
             this.setStatus(SessionStatus.FAILED, { reason: 'Logged out' });
+            void this.cleanupAuthFolder();
           } else if (this.shouldReconnect) {
             this.scheduleReconnect();
           } else {
@@ -853,5 +861,15 @@ export class WhatsappSession extends EventEmitter {
       }
     }
     await this.stop();
+    await this.cleanupAuthFolder();
+  }
+
+  public async cleanupAuthFolder(): Promise<void> {
+    try {
+      await fs.rm(this.sessionFolder, { recursive: true, force: true });
+      this.logger.info(`Cleaned up auth folder for session ${this.name}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to clean up auth folder for session ${this.name}: ${err.message}`);
+    }
   }
 }

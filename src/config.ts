@@ -51,7 +51,7 @@ export function loadConfig(): AppConfig {
     : ['*'];
 
   const webhookSecret = process.env.WHATSAPP_HOOK_SECRET?.trim() || process.env.WAHA_WEBHOOK_SECRET?.trim() || process.env.WAHA_HOOK_SECRET?.trim() || null;
-  const autoStartSession = process.env.WHATSAPP_START_SESSION?.trim() || 'default';
+  const autoStartSession = process.env.WHATSAPP_START_SESSION?.trim() || null;
 
   // HTTP Basic Auth for UI dashboard
   const dashboardUsername = process.env.WAHA_DASHBOARD_USERNAME?.trim() || 'admin';

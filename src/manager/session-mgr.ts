@@ -139,6 +139,11 @@ export class SessionManager {
       for (const entry of entries) {
         if (entry.isDirectory()) {
           const sessionName = entry.name;
+          // Never auto-restore legacy 'default' session when dynamic per-user sessions exist
+          if (sessionName === 'default') {
+            this.logger.info(`Skipping auto-restore of legacy 'default' session to avoid multi-device conflict.`);
+            continue;
+          }
           this.logger.info(`Found existing session folder: ${sessionName}, restoring...`);
           const session = new WhatsappSession(sessionName, this.sessionsBaseDir);
           this.sessions.set(sessionName, session);
