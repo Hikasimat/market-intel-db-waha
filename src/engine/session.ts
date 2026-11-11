@@ -63,8 +63,9 @@ export class WhatsappSession extends EventEmitter {
   }
 
   public addRecentMessage(msg: WAMessage) {
+    (msg as any).session = this.name;
     this.recentMessages.unshift(msg);
-    if (this.recentMessages.length > 50) {
+    if (this.recentMessages.length > 1000) {
       this.recentMessages.pop();
     }
   }
@@ -266,6 +267,21 @@ export class WhatsappSession extends EventEmitter {
             webhookDispatcher.dispatch('message', this.name, waMessage);
           }
           webhookDispatcher.dispatch('message.any', this.name, waMessage);
+        }
+      });
+
+      // Handle historical/synced messages on login or reconnection
+      this.sock.ev.on('messaging-history.set', async ({ messages }) => {
+        if (!Array.isArray(messages)) return;
+        for (const rawMsg of messages) {
+          try {
+            const waMessage = toWAMessage(rawMsg);
+            this.addRecentMessage(waMessage);
+            if (!waMessage.fromMe) {
+              webhookDispatcher.dispatch('message', this.name, waMessage);
+            }
+            webhookDispatcher.dispatch('message.any', this.name, waMessage);
+          } catch (_) {}
         }
       });
 
@@ -500,6 +516,34 @@ export class WhatsappSession extends EventEmitter {
       throw new Error('Failed to submit message to WhatsApp socket.');
     }
 
+    const waMsg = toWAMessage(sent);
+    this.addRecentMessage(waMsg);
+    return waMsg;
+  }
+
+  public async editText(
+    chatId: string,
+    messageId: string,
+    text: string,
+  ): Promise<WAMessage> {
+    if (!this.sock) {
+      throw new Error(`Session '${this.name}' is not connected.`);
+    }
+    const jid = toBaileysJid(chatId);
+    const parsed = parseMessageId(messageId);
+    const rawId = parsed.id || messageId;
+    const key = {
+      remoteJid: toBaileysJid(parsed.remoteJid || chatId),
+      id: rawId,
+      fromMe: true,
+    };
+    const sent = await this.sock.sendMessage(jid, {
+      text,
+      edit: key as any,
+    });
+    if (!sent) {
+      throw new Error('Failed to submit message edit to WhatsApp socket.');
+    }
     const waMsg = toWAMessage(sent);
     this.addRecentMessage(waMsg);
     return waMsg;
