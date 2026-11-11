@@ -1,4 +1,4 @@
-import type { proto, WACallEvent } from '@whiskeysockets/baileys';
+import { extractMessageContent, type proto, type WACallEvent } from '@whiskeysockets/baileys';
 import { type WAMessage, type ReplyToMessage, type WACallPayload, WAMessageAck, AckNames } from './types.js';
 
 export function normalizeJid(jid?: string | null): string {
@@ -32,27 +32,37 @@ export function parseMessageId(serializedId: string): { fromMe: boolean; remoteJ
 
 export function extractBody(message?: proto.IMessage | null): string | null {
   if (!message) return null;
+  const content = extractMessageContent(message) || message;
 
-  if (message.conversation) {
-    return message.conversation;
+  if (content.conversation) {
+    return content.conversation;
   }
-  if (message.extendedTextMessage?.text) {
-    return message.extendedTextMessage.text;
+  if (content.extendedTextMessage?.text) {
+    return content.extendedTextMessage.text;
   }
-  if (message.imageMessage?.caption) {
-    return message.imageMessage.caption;
+  if (content.imageMessage?.caption) {
+    return content.imageMessage.caption;
   }
-  if (message.videoMessage?.caption) {
-    return message.videoMessage.caption;
+  if (content.videoMessage?.caption) {
+    return content.videoMessage.caption;
   }
-  if (message.documentMessage?.caption) {
-    return message.documentMessage.caption;
+  if (content.documentMessage?.caption) {
+    return content.documentMessage.caption;
   }
-  if (message.pollCreationMessage?.name) {
-    return message.pollCreationMessage.name;
+  if (content.pollCreationMessage?.name) {
+    return content.pollCreationMessage.name;
   }
-  if (message.locationMessage?.name || message.locationMessage?.address) {
-    return [message.locationMessage.name, message.locationMessage.address].filter(Boolean).join(' - ');
+  if (content.locationMessage?.name || content.locationMessage?.address) {
+    return [content.locationMessage.name, content.locationMessage.address].filter(Boolean).join(' - ');
+  }
+  if ((content as any).buttonsResponseMessage?.selectedDisplayText) {
+    return (content as any).buttonsResponseMessage.selectedDisplayText;
+  }
+  if ((content as any).templateButtonReplyMessage?.selectedDisplayText) {
+    return (content as any).templateButtonReplyMessage.selectedDisplayText;
+  }
+  if ((content as any).listResponseMessage?.title) {
+    return (content as any).listResponseMessage.title;
   }
 
   return null;
@@ -60,24 +70,26 @@ export function extractBody(message?: proto.IMessage | null): string | null {
 
 export function hasMediaContent(message?: proto.IMessage | null): boolean {
   if (!message) return false;
+  const content = extractMessageContent(message) || message;
   return Boolean(
-    message.imageMessage ||
-    message.videoMessage ||
-    message.audioMessage ||
-    message.documentMessage ||
-    message.stickerMessage
+    content.imageMessage ||
+    content.videoMessage ||
+    content.audioMessage ||
+    content.documentMessage ||
+    content.stickerMessage
   );
 }
 
 export function extractReplyTo(message?: proto.IMessage | null): ReplyToMessage | null {
   if (!message) return null;
+  const content = extractMessageContent(message) || message;
 
   // Check extendedTextMessage contextInfo
   const context =
-    message.extendedTextMessage?.contextInfo ||
-    message.imageMessage?.contextInfo ||
-    message.videoMessage?.contextInfo ||
-    message.documentMessage?.contextInfo;
+    content.extendedTextMessage?.contextInfo ||
+    content.imageMessage?.contextInfo ||
+    content.videoMessage?.contextInfo ||
+    content.documentMessage?.contextInfo;
 
   if (!context || !context.stanzaId) {
     return null;
@@ -94,14 +106,21 @@ export function toWAMessage(msg: proto.IWebMessageInfo): WAMessage {
   const key = msg.key;
   const fromMe = Boolean(key.fromMe);
   const remoteJid = normalizeJid(key.remoteJid);
-  const participant = key.participant ? normalizeJid(key.participant) : undefined;
+  const rawParticipant = key.participant || (msg as any).participant;
+  const participant = rawParticipant ? normalizeJid(rawParticipant) : undefined;
+  const isGroup = remoteJid.endsWith('@g.us');
   const messageId = buildMessageId(fromMe, remoteJid, key.id || '');
 
-  const from = fromMe ? normalizeJid(msg.key.remoteJid) : (participant || remoteJid);
+  // In WAHA:
+  // - chatId: always the chat JID (remoteJid: group JID for groups, contact JID for direct chat)
+  // - from: sender JID; for groups, participant (if inbound) or group JID
+  // - to: target JID
+  // - author / participant: the group member who sent the message
+  const from = fromMe ? normalizeJid(msg.key.remoteJid) : (isGroup ? (participant || remoteJid) : remoteJid);
   const to = fromMe ? remoteJid : normalizeJid(msg.key.remoteJid);
 
   const targetJid = fromMe ? to : from;
-  const phone = targetJid.replace(/(:[0-9]+)?@(s\.whatsapp\.net|c\.us|g\.us|lid)$/, '').replace(/[^0-9]/g, '') || null;
+  const phone = (participant || targetJid).replace(/(:[0-9]+)?@(s\.whatsapp\.net|c\.us|g\.us|lid)$/, '').replace(/[^0-9]/g, '') || null;
   const pushName = msg.pushName || (msg as any).verifiedBizName || null;
 
   const timestamp = typeof msg.messageTimestamp === 'number'
@@ -115,16 +134,18 @@ export function toWAMessage(msg: proto.IWebMessageInfo): WAMessage {
   return {
     id: messageId,
     rawId: key.id || '',
+    chatId: remoteJid,
     timestamp,
     from,
     fromMe,
     to,
     participant,
+    author: participant,
     phone,
     pushName,
     profilePictureUrl: null,
     contact: {
-      id: targetJid,
+      id: participant || targetJid,
       phone: phone || '',
       pushName,
       profilePictureUrl: null,

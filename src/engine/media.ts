@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import axios from 'axios';
 import mime from 'mime-types';
-import { downloadMediaMessage, type proto, type WASocket } from '@whiskeysockets/baileys';
+import { downloadMediaMessage, extractMessageContent, type proto, type WASocket } from '@whiskeysockets/baileys';
 import { config } from '../config.js';
 import { createChildLogger } from '../logger.js';
 
@@ -54,7 +54,7 @@ export async function downloadAndSaveMedia(
   sock?: WASocket | null,
 ): Promise<{ url: string; mimetype: string; filename: string } | null> {
   try {
-    const messageContent = msg.message;
+    const messageContent = extractMessageContent(msg.message) || msg.message;
     if (!messageContent) return null;
 
     const mediaMsg =

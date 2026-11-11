@@ -244,23 +244,18 @@ export class WhatsappSession extends EventEmitter {
             }
           }
 
-          // Try to fetch profile picture for the contact
+          // Fetch profile picture asynchronously in background without blocking message dispatch
           const targetContactId = waMessage.fromMe ? waMessage.to : (waMessage.participant || waMessage.from);
-          if (targetContactId && !targetContactId.endsWith('@g.us') && !targetContactId.endsWith('@broadcast')) {
-            try {
-              const picUrl = await this.getProfilePictureUrl(targetContactId);
-              if (picUrl) {
-                waMessage.profilePictureUrl = picUrl;
-                if (waMessage.contact) {
-                  waMessage.contact.profilePictureUrl = picUrl;
+          if (targetContactId && !targetContactId.endsWith('@g.us') && !targetContactId.endsWith('@broadcast') && !targetContactId.endsWith('@lid')) {
+            this.getProfilePictureUrl(targetContactId)
+              .then((picUrl) => {
+                if (picUrl) {
+                  waMessage.profilePictureUrl = picUrl;
+                  if (waMessage.contact) waMessage.contact.profilePictureUrl = picUrl;
+                  if (waMessage._data) waMessage._data.profilePictureUrl = picUrl;
                 }
-                if (waMessage._data) {
-                  waMessage._data.profilePictureUrl = picUrl;
-                }
-              }
-            } catch {
-              // Ignore profile picture fetch failure
-            }
+              })
+              .catch(() => {});
           }
 
           this.addRecentMessage(waMessage);
